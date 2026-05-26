@@ -60,8 +60,7 @@ def _content_to_text(content: Any) -> str:
         return content
     if isinstance(content, list):
         return "".join(
-            part.get("text", "") if isinstance(part, dict) else getattr(part, "text", "")
-            for part in content
+            part.get("text", "") if isinstance(part, dict) else getattr(part, "text", "") for part in content
         )
     return str(content or "")
 
@@ -184,6 +183,11 @@ class OpenCodeAgentConfig(BaseResponsesAPIAgentConfig):
     system_prompt: Optional[str] = None
     extra_args: list[str] = []
     opencode_config: dict[str, Any] = Field(default_factory=dict)
+    verify_swebench: bool = False
+    swebench_setup_dir: Optional[str] = None
+    swebench_results_root: str = "outputs/opencode_agent/swebench-verifier"
+    swebench_verifier_timeout: int = 1200
+    swebench_model_name: str = "opencode_agent"
 
     @property
     def command_parts(self) -> list[str]:
@@ -305,6 +309,119 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
         if not work_dir:
             return ""
         return await self._run_shell(f"git -C {shlex.quote(work_dir)} diff --binary", timeout=120)
+
+    def _resolve_swebench_setup_dir(self) -> Path:
+        if self.config.swebench_setup_dir:
+            setup_dir = Path(self.config.swebench_setup_dir).expanduser()
+            if not setup_dir.is_absolute():
+                setup_dir = Path.cwd() / setup_dir
+            return setup_dir
+
+        return Path(__file__).resolve().parents[1] / "swe_agents" / "swe_swebench_setup"
+
+    @staticmethod
+    def _load_instance_dict(metadata: dict[str, Any]) -> dict[str, Any]:
+        raw = metadata.get("instance_dict")
+        if raw:
+            instance = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        else:
+            instance = {
+                key: metadata[key]
+                for key in ("repo", "instance_id", "base_commit", "patch", "test_patch", "problem_statement")
+                if key in metadata
+            }
+        if "repo" in instance and "repo_name" not in instance:
+            instance["repo_name"] = instance["repo"]
+        return instance
+
+    async def _verify_swebench_patch(self, metadata: dict[str, Any], patch: str) -> dict[str, Any]:
+        instance_id = str(metadata.get("instance_id") or "")
+        if not instance_id:
+            return {"swebench_resolved": False, "swebench_error": "missing instance_id"}
+        if not patch.strip():
+            return {"swebench_resolved": False, "swebench_error": "empty patch"}
+
+        setup_dir = self._resolve_swebench_setup_dir()
+        swebench_dir = setup_dir / "SWE-bench"
+        python_bin = swebench_dir / "venv" / "bin" / "python"
+        if not python_bin.exists():
+            raise FileNotFoundError(f"SWE-bench setup is missing: {python_bin}")
+
+        container = self._resolve_container_path(instance_id)
+        result_root = Path(self.config.swebench_results_root).expanduser()
+        if not result_root.is_absolute():
+            result_root = Path.cwd() / result_root
+        result_dir = result_root / f"{instance_id}_{uuid4().hex[:8]}"
+        result_dir.mkdir(parents=True, exist_ok=True)
+
+        instance = self._load_instance_dict(metadata)
+        instance.setdefault("instance_id", instance_id)
+        dataset_path = result_dir / "data.jsonl"
+        prediction_path = result_dir / "output_for_eval.jsonl"
+        patch_path = result_dir / "patch.diff"
+        dataset_path.write_text(json.dumps(instance) + "\n")
+        prediction_path.write_text(
+            json.dumps(
+                {
+                    "model_name_or_path": self.config.swebench_model_name,
+                    "instance_id": instance_id,
+                    "model_patch": patch if patch.endswith("\n") else f"{patch}\n",
+                }
+            )
+            + "\n"
+        )
+        patch_path.write_text(patch)
+
+        run_id = f"opencode_{uuid4().hex[:8]}"
+        split = str(metadata.get("split") or "test")
+        setup_dir_q = shlex.quote(str(setup_dir))
+        command = (
+            f"{shlex.quote(self.config.apptainer_command)} exec --writable-tmpfs --cleanenv --pid "
+            "--no-mount home,tmp,bind-paths "
+            f"--mount type=bind,src={shlex.quote(str(result_dir))},dst=/trajectories_mount "
+            f"--mount type=bind,src={shlex.quote(str(result_dir))},dst=/root/dataset "
+            f"--mount type=bind,src={setup_dir_q},dst=/swebench_setup "
+            f"--mount type=bind,src={setup_dir_q},dst={setup_dir_q} "
+            f"{shlex.quote(str(container))} bash -lc "
+            + shlex.quote(
+                "cd /swebench_setup/SWE-bench && "
+                f"export UV_INSTALL_DIR={shlex.quote(str(setup_dir / 'uv'))} && "
+                f"export UV_PYTHON_INSTALL_DIR={shlex.quote(str(setup_dir / 'python'))} && "
+                f"export PATH={shlex.quote(str(setup_dir / 'uv' / 'bin'))}:$PATH && "
+                f"env -u VIRTUAL_ENV {shlex.quote(str(python_bin))} "
+                "-m swebench.harness.run_local_evaluation "
+                "--predictions_path /trajectories_mount/output_for_eval.jsonl "
+                f"--instance_ids {shlex.quote(instance_id)} "
+                f"--timeout {self.config.swebench_verifier_timeout} "
+                "--dataset_name /root/dataset/data.jsonl "
+                f"--split {shlex.quote(split)} "
+                f"--run_id {shlex.quote(run_id)}"
+            )
+        )
+        await self._run_shell(command, timeout=self.config.swebench_verifier_timeout + 180)
+
+        source_summary = swebench_dir / f"{self.config.swebench_model_name}.{run_id}.json"
+        source_instance_dir = (
+            swebench_dir / "logs" / "run_evaluation" / run_id / self.config.swebench_model_name / instance_id
+        )
+        source_report = source_instance_dir / "report.json"
+
+        summary_path = result_dir / source_summary.name
+        report_dir = result_dir / "logs" / instance_id
+        report_path = report_dir / "report.json"
+        if source_summary.exists():
+            shutil.copy2(source_summary, summary_path)
+        if source_instance_dir.exists():
+            shutil.copytree(source_instance_dir, report_dir, dirs_exist_ok=True)
+
+        report = json.loads(source_report.read_text() if source_report.exists() else report_path.read_text())
+        resolved = bool(report.get(instance_id, {}).get("resolved", False))
+        return {
+            "swebench_resolved": resolved,
+            "swebench_report_path": str(report_path),
+            "swebench_summary_path": str(summary_path),
+            "swebench_output_dir": str(result_dir),
+        }
 
     def _write_opencode_config(self, work_dir: Optional[str]) -> Optional[str]:
         if not self.config.opencode_config:
@@ -462,12 +579,31 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
             naturally = getattr(last, "type", None) == "message" and getattr(last, "role", None) == "assistant"
 
             if not self.config.resources_server:
+                reward = 0.0
+                verify_fields: dict[str, Any] = {}
+                metadata = body.responses_create_params.metadata or {}
+                response_metadata = gym_resp.metadata or {}
+                if self.config.verify_swebench:
+                    try:
+                        verify_fields = await self._verify_swebench_patch(
+                            dict(metadata),
+                            str(response_metadata.get("patch") or ""),
+                        )
+                        reward = 1.0 if verify_fields.get("swebench_resolved") else 0.0
+                    except Exception as exc:
+                        LOG.exception("SWE-bench verification failed")
+                        verify_fields = {
+                            "swebench_resolved": False,
+                            "swebench_error": str(exc),
+                        }
+
                 return OpenCodeAgentVerifyResponse(
                     responses_create_params=body.responses_create_params,
                     response=gym_resp,
-                    reward=0.0,
+                    reward=reward,
                     turns_used=turns,
                     finished_naturally=naturally,
+                    **verify_fields,
                 )
 
             verify_resp = await self.server_client.post(

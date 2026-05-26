@@ -31,6 +31,11 @@ opencode_agent:
       thinking: true
       system_prompt: null
       extra_args: []
+      verify_swebench: false
+      swebench_setup_dir: null
+      swebench_results_root: outputs/opencode_agent/swebench-verifier
+      swebench_verifier_timeout: 1200
+      swebench_model_name: opencode_agent
       opencode_config:
         provider:
           nvidia:
@@ -66,8 +71,12 @@ opencode_agent:
   This is required for provider aliases such as `nvidia/opus-frontier`.
 - For benchmark scoring, set `resources_server` to a verifier server or extend
   this agent with benchmark-specific verification.
+- For SWE-bench scoring, set `verify_swebench=true` and provide
+  `container_formatter`. The adapter writes a SWE-bench prediction JSONL from
+  the OpenCode patch, runs `swebench.harness.run_local_evaluation` in the task
+  SIF, and returns `reward=1.0` only when the report marks the instance
+  resolved.
 - `data/django_13741_smoke.jsonl` is a one-row Django SWE-bench Verified task
   adapted from the Harbor OpenCode smoke test.
-- For the SWE-bench/OpenCode POC, the next step is to materialize the
-  SWE-bench workspace for one task, run OpenCode inside that workspace, collect
-  a patch/logs, and run the SWE-bench verifier.
+- The verifier stores per-run artifacts under `swebench_results_root`, including
+  the prediction JSONL, patch diff, copied SWE-bench report, and test logs.

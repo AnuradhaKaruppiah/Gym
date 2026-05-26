@@ -18,6 +18,11 @@ opencode_agent:
       thinking: true
       system_prompt: null
       extra_args: []
+      verify_swebench: false
+      swebench_setup_dir: null
+      swebench_results_root: outputs/opencode_agent/swebench-verifier
+      swebench_verifier_timeout: 1200
+      swebench_model_name: opencode_agent
       opencode_config:
         provider:
           nvidia:

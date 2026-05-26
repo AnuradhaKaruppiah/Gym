@@ -65,6 +65,10 @@ class TestSanity:
         assert cfg.timeout == 900
         assert cfg.thinking is True
         assert cfg.opencode_config == {}
+        assert cfg.verify_swebench is False
+        assert cfg.swebench_setup_dir is None
+        assert cfg.swebench_results_root == "outputs/opencode_agent/swebench-verifier"
+        assert cfg.swebench_model_name == "opencode_agent"
 
     def test_command_prefix_splits(self) -> None:
         cfg = _config(command="npx -y opencode-ai")
@@ -76,6 +80,32 @@ class TestSanity:
             "django_1776_django-13741",
             "django_s_django-13741",
         ]
+
+    def test_load_instance_dict_from_metadata(self) -> None:
+        metadata = {"instance_dict": json.dumps({"repo": "django/django", "instance_id": "django__django-13741"})}
+
+        instance = OpenCodeAgent._load_instance_dict(metadata)
+
+        assert instance["repo"] == "django/django"
+        assert instance["repo_name"] == "django/django"
+        assert instance["instance_id"] == "django__django-13741"
+
+    def test_load_instance_dict_from_flat_metadata(self) -> None:
+        metadata = {
+            "repo": "django/django",
+            "instance_id": "django__django-13741",
+            "base_commit": "abc123",
+            "ignored": "x",
+        }
+
+        instance = OpenCodeAgent._load_instance_dict(metadata)
+
+        assert instance == {
+            "repo": "django/django",
+            "repo_name": "django/django",
+            "instance_id": "django__django-13741",
+            "base_commit": "abc123",
+        }
 
     def test_semaphore_initialized(self) -> None:
         agent = _make_agent(concurrency=3)
@@ -170,6 +200,10 @@ class TestConfigYaml:
         assert inner["model"] == "nvidia/opus-frontier"
         assert inner["concurrency"] == 8
         assert inner["container_formatter"] is None
+        assert inner["verify_swebench"] is False
+        assert inner["swebench_setup_dir"] is None
+        assert inner["swebench_results_root"] == "outputs/opencode_agent/swebench-verifier"
+        assert inner["swebench_model_name"] == "opencode_agent"
         assert inner["opencode_config"]["provider"]["nvidia"]["options"]["baseURL"] == "{env:NVIDIA_BASE_URL}"
         assert inner["opencode_config"]["provider"]["nvidia"]["models"]["opus-frontier"]["id"] == (
             "aws/anthropic/claude-opus-4-5"
