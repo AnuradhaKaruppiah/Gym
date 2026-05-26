@@ -14,17 +14,20 @@
 # limitations under the License.
 
 import asyncio
+import copy
 import json
 import logging
 import os
+import shlex
 import shutil
 from asyncio import Semaphore
+from pathlib import Path
 from time import time
 from typing import Any, Optional
 from uuid import uuid4
 
 from fastapi import Request
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 
 from nemo_gym.base_resources_server import BaseRunRequest, BaseVerifyResponse
 from nemo_gym.base_responses_api_agent import (
@@ -172,10 +175,19 @@ class OpenCodeAgentConfig(BaseResponsesAPIAgentConfig):
     openai_api_key: str = ""  # pragma: allowlist secret
     openai_base_url: Optional[str] = None
     work_dir: Optional[str] = None
+    workspace_root: str = "outputs/opencode_agent/workspaces"
+    container_formatter: Optional[str] = None
+    apptainer_command: str = "apptainer"
+    setup_timeout: int = 900
     timeout: int = 900
     thinking: bool = True
     system_prompt: Optional[str] = None
     extra_args: list[str] = []
+    opencode_config: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def command_parts(self) -> list[str]:
+        return shlex.split(self.command)
 
 
 class OpenCodeAgentRunRequest(BaseRunRequest):
@@ -195,8 +207,18 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
 
     def model_post_init(self, __context: Any) -> None:
         self.sem = Semaphore(self.config.concurrency)
-        if shutil.which(self.config.command) is None:
+        command = self.config.command_parts[0] if self.config.command_parts else ""
+        if not command or shutil.which(command) is None:
             LOG.warning("OpenCode command %r is not on PATH yet", self.config.command)
+
+    @staticmethod
+    def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+        for key, value in override.items():
+            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                OpenCodeAgent._deep_merge(base[key], value)
+            else:
+                base[key] = value
+        return base
 
     def _resolve_model_base_url(self) -> Optional[str]:
         if self.config.model_server:
@@ -207,21 +229,111 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
             return f"{self.server_client._build_server_base_url(cfg)}/v1"
         return self.config.openai_base_url
 
-    async def _run_opencode(self, instruction: str, system_prompt: Optional[str]) -> tuple[str, str]:
+    @staticmethod
+    def _candidate_instance_ids(instance_id: str) -> list[str]:
+        candidates = [instance_id]
+        for replacement in ("_1776_", "_s_"):
+            replaced = instance_id.replace("__", replacement)
+            candidates.extend([replaced, replaced.lower()])
+        return list(dict.fromkeys(candidates))
+
+    def _resolve_container_path(self, instance_id: str) -> Path:
+        if not self.config.container_formatter:
+            raise ValueError("container_formatter is required for SWE-bench workspace materialization")
+
+        tried: list[Path] = []
+        for candidate in self._candidate_instance_ids(instance_id):
+            path = Path(self.config.container_formatter.format(instance_id=candidate)).expanduser()
+            tried.append(path)
+            if path.exists():
+                return path
+
+        raise FileNotFoundError(
+            f"No SWE-bench container found for {instance_id}. Tried: {', '.join(str(p) for p in tried)}"
+        )
+
+    async def _run_shell(self, command: str, timeout: int) -> str:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            raise TimeoutError(f"Timed out after {timeout}s: {command}") from None
+
+        if proc.returncode:
+            raise RuntimeError(
+                f"Command failed with code {proc.returncode}: {command}\n{stderr.decode(errors='replace')[:2000]}"
+            )
+        return stdout.decode(errors="replace")
+
+    async def _materialize_swebench_workspace(self, metadata: dict[str, Any]) -> Optional[str]:
+        if self.config.work_dir or not self.config.container_formatter:
+            return self.config.work_dir
+
+        instance_id = metadata.get("instance_id")
+        if not instance_id:
+            return None
+
+        container = self._resolve_container_path(instance_id)
+        base_commit = metadata.get("base_commit")
+        workspace_root = Path(self.config.workspace_root).expanduser()
+        work_dir = workspace_root / f"{instance_id}_{uuid4().hex[:8]}" / "testbed"
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        copy_cmd = (
+            f"{shlex.quote(self.config.apptainer_command)} exec {shlex.quote(str(container))} "
+            "bash -lc 'cd /testbed && tar cf - .' "
+            f"| tar -C {shlex.quote(str(work_dir))} -xf -"
+        )
+        await self._run_shell(copy_cmd, timeout=self.config.setup_timeout)
+
+        if base_commit:
+            await self._run_shell(
+                f"git -C {shlex.quote(str(work_dir))} checkout -f {shlex.quote(str(base_commit))}",
+                timeout=120,
+            )
+            await self._run_shell(f"git -C {shlex.quote(str(work_dir))} clean -fd", timeout=120)
+
+        return str(work_dir)
+
+    async def _collect_patch(self, work_dir: Optional[str]) -> str:
+        if not work_dir:
+            return ""
+        return await self._run_shell(f"git -C {shlex.quote(work_dir)} diff --binary", timeout=120)
+
+    def _write_opencode_config(self, work_dir: Optional[str]) -> Optional[str]:
+        if not self.config.opencode_config:
+            return None
+
+        config_home = Path(work_dir).parent / ".opencode-config" if work_dir else Path(self.config.workspace_root)
+        config_dir = config_home / "opencode"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config = self._deep_merge({}, copy.deepcopy(self.config.opencode_config))
+        (config_dir / "opencode.json").write_text(json.dumps(config, indent=2))
+        return str(config_home)
+
+    async def _run_opencode(
+        self, instruction: str, system_prompt: Optional[str], work_dir: Optional[str]
+    ) -> tuple[str, str]:
         prompt = instruction
         if system_prompt:
             prompt = f"{system_prompt}\n\n{instruction}"
 
         cmd = [
-            self.config.command,
+            *self.config.command_parts,
             "run",
             f"--model={self.config.model}",
             "--format=json",
         ]
         if self.config.thinking:
             cmd.append("--thinking")
-        if self.config.work_dir:
-            cmd.extend(["--dir", self.config.work_dir])
+        if work_dir:
+            cmd.extend(["--dir", work_dir])
         cmd.extend(self.config.extra_args)
         cmd.extend(["--", prompt])
 
@@ -231,6 +343,10 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
             env["OPENAI_BASE_URL"] = base_url
         if self.config.openai_api_key:
             env["OPENAI_API_KEY"] = self.config.openai_api_key
+        config_home = self._write_opencode_config(work_dir)
+        if config_home:
+            env["XDG_CONFIG_HOME"] = config_home
+        env["OPENCODE_FAKE_VCS"] = "git"
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -263,9 +379,12 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
         user_message, input_system = _extract_instruction(body.input)
         system_parts = [p for p in [self.config.system_prompt, input_system] if p]
         system_prompt = "\n\n".join(system_parts) if system_parts else None
+        metadata = getattr(body, "metadata", None) or {}
 
-        stdout, model_name = await self._run_opencode(user_message, system_prompt)
+        work_dir = await self._materialize_swebench_workspace(metadata)
+        stdout, model_name = await self._run_opencode(user_message, system_prompt, work_dir)
         output_items, usage = parse_opencode_jsonl(stdout)
+        patch = await self._collect_patch(work_dir)
 
         if not any(
             getattr(item, "type", None) == "message" and getattr(item, "role", None) == "assistant"
@@ -301,6 +420,12 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
                 output_tokens_details=NeMoGymResponseOutputTokensDetails(reasoning_tokens=0),
                 total_tokens=input_tokens + output_tokens,
             ),
+            metadata={
+                "work_dir": work_dir or "",
+                "patch": patch,
+                "patch_exists": str(bool(patch.strip())).lower(),
+                "instance_id": str(metadata.get("instance_id") or ""),
+            },
         )
 
     async def run(self, request: Request, body: OpenCodeAgentRunRequest) -> OpenCodeAgentVerifyResponse:

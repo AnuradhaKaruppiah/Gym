@@ -61,8 +61,21 @@ class TestSanity:
         cfg = _config()
         assert cfg.concurrency == 8
         assert cfg.command == "opencode"
+        assert cfg.command_parts == ["opencode"]
         assert cfg.timeout == 900
         assert cfg.thinking is True
+        assert cfg.opencode_config == {}
+
+    def test_command_prefix_splits(self) -> None:
+        cfg = _config(command="npx -y opencode-ai")
+        assert cfg.command_parts == ["npx", "-y", "opencode-ai"]
+
+    def test_candidate_instance_ids(self) -> None:
+        assert OpenCodeAgent._candidate_instance_ids("django__django-13741") == [
+            "django__django-13741",
+            "django_1776_django-13741",
+            "django_s_django-13741",
+        ]
 
     def test_semaphore_initialized(self) -> None:
         agent = _make_agent(concurrency=3)
@@ -154,4 +167,38 @@ class TestConfigYaml:
         inner = data["opencode_agent"]["responses_api_agents"]["opencode_agent"]
         assert inner["entrypoint"] == "app.py"
         assert inner["command"] == "opencode"
+        assert inner["model"] == "nvidia/opus-frontier"
         assert inner["concurrency"] == 8
+        assert inner["container_formatter"] is None
+        assert inner["opencode_config"]["provider"]["nvidia"]["options"]["baseURL"] == "{env:NVIDIA_BASE_URL}"
+        assert inner["opencode_config"]["provider"]["nvidia"]["models"]["opus-frontier"]["id"] == (
+            "aws/anthropic/claude-opus-4-5"
+        )
+        assert inner["datasets"][0]["jsonl_fpath"] == (
+            "responses_api_agents/opencode_agent/data/django_13741_smoke.jsonl"
+        )
+
+    def test_django_smoke_jsonl_parses(self) -> None:
+        data_path = Path(__file__).resolve().parent.parent / "data" / "django_13741_smoke.jsonl"
+        lines = data_path.read_text().splitlines()
+        assert len(lines) == 1
+        row = json.loads(lines[0])
+        assert row["instance_id"] == "django__django-13741"
+        assert row["agent_ref"] == {"type": "responses_api_agents", "name": "opencode_agent"}
+        metadata = row["responses_create_params"]["metadata"]
+        assert metadata["harbor_task_path"].endswith("django__django-13741")
+        assert metadata["instance_id"] == row["instance_id"]
+
+    def test_write_opencode_config_isolated(self, tmp_path: Path) -> None:
+        agent = _make_agent(
+            workspace_root=str(tmp_path / "workspaces"),
+            opencode_config={"provider": {"nvidia": {"models": {"opus-frontier": {"id": "model-id"}}}}},
+        )
+        work_dir = tmp_path / "workspaces" / "task" / "testbed"
+        work_dir.mkdir(parents=True)
+
+        config_home = agent._write_opencode_config(str(work_dir))
+
+        assert config_home == str(work_dir.parent / ".opencode-config")
+        written = json.loads((Path(config_home) / "opencode" / "opencode.json").read_text())
+        assert written["provider"]["nvidia"]["models"]["opus-frontier"]["id"] == "model-id"

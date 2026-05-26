@@ -1,0 +1,90 @@
+{
+    "name": "django_13741_smoke",
+    "type": "example",
+    "jsonl_fpath": "responses_api_agents/opencode_agent/data/django_13741_smoke.jsonl",
+    "num_repeats": 1,
+    "gitlab_identifier": null,
+    "huggingface_identifier": null,
+    "license": "Apache 2.0",
+    "Number of examples": 1,
+    "Number of tools": {
+        "Total # non-null values": 0,
+        "Average": 0.0,
+        "Min": 0.0,
+        "Max": 0.0,
+        "Standard deviation": 0.0
+    },
+    "Json-dumped number of words (proxy for token count)": {
+        "Total # non-null values": 1,
+        "Average": 990.0,
+        "Min": 990.0,
+        "Max": 990.0,
+        "Standard deviation": 0.0
+    },
+    "Number of turns": {
+        "Total # non-null values": 1,
+        "Average": 1.0,
+        "Min": 1.0,
+        "Max": 1.0,
+        "Standard deviation": 0.0
+    },
+    "Temperature": {
+        "Total # non-null values": 1,
+        "Average": 0.2,
+        "Min": 0.2,
+        "Max": 0.2,
+        "Standard deviation": 0.0
+    },
+    "repo": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "instance_id": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "base_commit": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "patch": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "test_patch": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "problem_statement": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "hints_text": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "created_at": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "version": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "FAIL_TO_PASS": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "PASS_TO_PASS": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "environment_setup_commit": {
+        "unique_count": 1,
+        "total_count": 1
+    },
+    "difficulty": {
+        "unique_count": 1,
+        "total_count": 1
+    }
+}

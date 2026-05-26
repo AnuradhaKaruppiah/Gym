@@ -6,11 +6,35 @@ opencode_agent:
       model_server: null
       concurrency: 8
       command: opencode
-      model: openai/gpt-4o-mini
+      model: nvidia/opus-frontier
       openai_api_key: ${openai_api_key}
       openai_base_url: ${openai_base_url}
       work_dir: null
+      workspace_root: outputs/opencode_agent/workspaces
+      container_formatter: null
+      apptainer_command: apptainer
+      setup_timeout: 900
       timeout: 900
       thinking: true
       system_prompt: null
       extra_args: []
+      opencode_config:
+        provider:
+          nvidia:
+            npm: "@ai-sdk/openai-compatible"
+            name: NVIDIA
+            options:
+              baseURL: "{env:NVIDIA_BASE_URL}"
+              apiKey: "{env:NVIDIA_API_KEY}"
+            models:
+              opus-frontier:
+                id: aws/anthropic/claude-opus-4-5
+                name: Claude 4.5 Opus
+                reasoning: true
+                options:
+                  reasoning_effort: high
+      datasets:
+        - name: django_13741_smoke
+          type: example
+          jsonl_fpath: responses_api_agents/opencode_agent/data/django_13741_smoke.jsonl
+          license: Apache 2.0
