@@ -1,0 +1,16 @@
+opencode_agent:
+  responses_api_agents:
+    opencode_agent:
+      entrypoint: app.py
+      resources_server: null
+      model_server: null
+      concurrency: 8
+      command: opencode
+      model: openai/gpt-4o-mini
+      openai_api_key: ${openai_api_key}
+      openai_base_url: ${openai_base_url}
+      work_dir: null
+      timeout: 900
+      thinking: true
+      system_prompt: null
+      extra_args: []
