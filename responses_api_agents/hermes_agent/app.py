@@ -236,7 +236,7 @@ class _HermesNemoRelayCapture:
         self._tool_handles.clear()
 
         self._scope.pop(self._agent_handle, output=output)
-        self._atif_path.write_text(self._atif_exporter.export_json())
+        self.atif_path.write_text(self._atif_exporter.export_json())
         self._atif_exporter.deregister(self._atif_subscriber)
         self._atof_exporter.deregister(self._atof_subscriber)
         self._atof_exporter.force_flush()
@@ -247,8 +247,8 @@ class _HermesNemoRelayCapture:
         return {
             "nemo_relay_output_dir": str(self.relay_dir),
             "nemo_relay_atof_path": str(self.atof_path) if self.atof_path.exists() else "",
-            "nemo_relay_atif_path": str(self._atif_path) if self._atif_path.exists() else "",
-            "nemo_relay_atif_paths": json.dumps([str(self._atif_path)] if self._atif_path.exists() else []),
+            "nemo_relay_atif_path": str(self.atif_path) if self.atif_path.exists() else "",
+            "nemo_relay_atif_paths": json.dumps([str(self.atif_path)] if self.atif_path.exists() else []),
         }
 
 
