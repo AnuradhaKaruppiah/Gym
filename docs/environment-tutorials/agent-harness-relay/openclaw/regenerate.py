@@ -159,7 +159,11 @@ def _default_tmp_root() -> Path:
     env_value = os.environ.get("GYM_OUTPUT_DIR")
     if env_value:
         return Path(env_value)
-    return Path(__file__).resolve().parents[5] / ".tmp/nemo-gym"
+    return Path(__file__).resolve().parents[6] / ".tmp/nemo-gym"
+
+
+def _default_output_dir() -> Path:
+    return Path(__file__).resolve().parent / "artifacts"
 
 
 def regenerate(
@@ -236,7 +240,7 @@ def regenerate(
             "finished_naturally": relay.get("finished_naturally"),
             "swebench_resolved": relay.get("swebench_resolved"),
             "patch_path": str(relay_patch_path),
-            "note": "NeMoRelay/NeMoFlow plugin emitted normalized ATIF from OpenClaw events. OpenClaw session JSONL is included as the raw harness log.",
+            "note": "NeMoRelay plugin emitted normalized ATIF from OpenClaw events. OpenClaw session JSONL is included as the raw harness log.",
         },
         "comparison_note": "OpenClaw appears more hook-friendly than OpenCode for this POC: both baseline and Relay runs have a compact native session JSONL with message/tool events, and Relay converts the enabled run into a 20-step ATIF trajectory.",
     }
@@ -255,8 +259,8 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path(__file__).resolve().parent,
-        help="Directory where this comparison bundle should be written.",
+        default=_default_output_dir(),
+        help="Directory where this comparison bundle's JSON/JSONL artifacts should be written.",
     )
     parser.add_argument(
         "--no-relay-rollout",
@@ -282,8 +286,8 @@ def main() -> None:
     if args.repo_root is not None:
         if tmp_root is None:
             tmp_root = args.repo_root / ".tmp/nemo-gym"
-        if output_dir == Path(__file__).resolve().parent:
-            output_dir = args.repo_root / "external/nemo-gym/data/swe_task/openclaw"
+        if output_dir == _default_output_dir():
+            output_dir = args.repo_root / "external/nemo-gym/docs/environment-tutorials/agent-harness-relay/openclaw/artifacts"
     if tmp_root is None:
         tmp_root = _default_tmp_root()
 

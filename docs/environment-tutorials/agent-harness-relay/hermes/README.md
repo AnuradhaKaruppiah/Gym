@@ -4,29 +4,32 @@ This directory compares artifacts for the same SWE-bench Verified task with and 
 
 ## Files
 
-- `without-relay.gym-reconstructed.atif.json`: post-hoc ATIF reconstructed from Gym rollout output.
-- `with-relay.nemo-relay.atif.json`: ATIF emitted from adapter-level NeMoRelay capture around Hermes callbacks.
-- `with-relay.nemo-relay.atof.jsonl`: raw ATOF events behind the Relay ATIF.
-- `summary.json`: compact comparison metadata.
-- `regenerate.py`: refreshes the files in this directory from Gym rollout artifacts.
+- `artifacts/without-relay.gym-reconstructed.atif.json`: post-hoc ATIF reconstructed from Gym rollout output.
+- `artifacts/with-relay.nemo-relay.atif.json`: ATIF emitted from adapter-level NeMoRelay capture around Hermes callbacks.
+- `artifacts/with-relay.nemo-relay.atof.jsonl`: raw ATOF events behind the Relay ATIF.
+- `artifacts/summary.json`: compact comparison metadata.
+- `regenerate.py`: refreshes the files in `artifacts/` from Gym rollout outputs.
 
 ## Current Snapshot
 
-Both runs resolved `django__django-13741` with `reward=1.0`.
+The current regenerated snapshot uses the same `django__django-13741` task, but
+this particular Hermes model pass did not produce a patch and did not resolve
+the verifier (`reward=0.0`). The artifacts are still useful for comparing the
+Gym response shape against Relay's ATOF/ATIF capture.
 
 Baseline Gym/Hermes:
 
-- 29 reconstructed ATIF steps
-- 10 assistant message items
-- 9 function calls
-- 9 function-call outputs
+- 92 reconstructed ATIF steps
+- 31 assistant message items
+- 30 function calls
+- 30 function-call outputs
 
 Relay-enabled Gym/Hermes:
 
-- 64 ATOF events
-- 50 ATIF steps
-- ATIF source split: 13 agent, 13 user, 24 system
-- 13 turns used by the Hermes agent
+- 154 ATOF events
+- 122 ATIF steps
+- ATIF source split: 31 agent, 31 user, 60 system
+- 31 turns used by the Hermes agent
 
 Hermes is a useful third comparison point: the baseline Gym response already has structured tool call/output items, while Relay adds raw ATOF plus normalized ATIF. The current Hermes ATIF is noisier than OpenClaw because the adapter projects Hermes callbacks and assistant messages rather than consuming a native harness session log.
 
@@ -52,29 +55,34 @@ Install Apptainer separately if it is not already available:
 apptainer --version
 ```
 
-## Set Up NeMoFlow
+## Set Up NeMoRelay
 
-Hermes uses the NeMoFlow Python package. For this POC, the Relay-enabled run
-points at a local NeMoRelay checkout so Gym does not need a hard dependency on
-NeMoFlow:
+Hermes uses the NeMoRelay Python package only when Relay capture is enabled. For
+this POC, install a local NeMoRelay checkout into the Gym virtual environment so
+Gym does not need a hard dependency:
 
 ```bash
 export NEMO_RELAY_PYTHON_PATH=/path/to/NeMo-Relay/python
-test -f "${NEMO_RELAY_PYTHON_PATH}/nemo_flow/__init__.py"
+
+cd "${GYM_SOURCE_DIR}"
+source .venv/bin/activate
+uv pip install -e "$(dirname "${NEMO_RELAY_PYTHON_PATH}")"
+
+python -c "import nemo_relay; print(nemo_relay.__file__)"
 ```
 
-The Relay-enabled command passes this path as `nemo_relay.python_path`; the
-Hermes adapter adds it to `sys.path` before importing `nemo_flow`.
+The Relay-enabled command also passes this path as `nemo_relay.python_path` for
+local source checkout runs.
 
-If you want to use the published Python package instead, install it into the Gym
-virtual environment and omit the `nemo_relay.python_path` override:
+If you want to use the published Python package instead, install it into the
+Gym virtual environment and omit the `nemo_relay.python_path` override:
 
 ```bash
 cd "${GYM_SOURCE_DIR}"
 source .venv/bin/activate
 
-uv pip install nemo-flow
-python -c "import nemo_flow; print(nemo_flow.__file__)"
+uv pip install nemo-relay
+python -c "import nemo_relay; print(nemo_relay.__file__)"
 ```
 
 ## Configure Paths
@@ -123,6 +131,7 @@ set +a
   '+config_paths=[responses_api_agents/hermes_agent/configs/hermes_agent.yaml,responses_api_models/openai_model/configs/openai_model.yaml]' \
   +head_server.host=127.0.0.1 \
   +head_server.port=11031 \
+  +hermes_agent.responses_api_agents.hermes_agent.resources_server=null \
   '+policy_base_url=${oc.env:NVIDIA_BASE_URL}' \
   '+policy_api_key=${oc.env:NVIDIA_API_KEY}' \
   +policy_model_name=nvidia/qwen/qwen-235b \
@@ -167,6 +176,7 @@ set +a
   '+config_paths=[responses_api_agents/hermes_agent/configs/hermes_agent.yaml,responses_api_models/openai_model/configs/openai_model.yaml]' \
   +head_server.host=127.0.0.1 \
   +head_server.port=11032 \
+  +hermes_agent.responses_api_agents.hermes_agent.resources_server=null \
   '+policy_base_url=${oc.env:NVIDIA_BASE_URL}' \
   '+policy_api_key=${oc.env:NVIDIA_API_KEY}' \
   +policy_model_name=nvidia/qwen/qwen-235b \
@@ -204,14 +214,14 @@ After rerunning the baseline and Relay commands, refresh the checked-in comparis
 ```bash
 cd "${GYM_SOURCE_DIR}"
 
-python3 data/swe_task/hermes/regenerate.py \
+python3 docs/environment-tutorials/agent-harness-relay/hermes/regenerate.py \
   --tmp-root "${GYM_OUTPUT_DIR}" \
-  --output-dir "${GYM_SOURCE_DIR}/data/swe_task/hermes"
+  --output-dir "${GYM_SOURCE_DIR}/docs/environment-tutorials/agent-harness-relay/hermes/artifacts"
 ```
 
 The script rewrites:
 
-- `without-relay.gym-reconstructed.atif.json`
-- `with-relay.nemo-relay.atif.json`
-- `with-relay.nemo-relay.atof.jsonl`
-- `summary.json`
+- `artifacts/without-relay.gym-reconstructed.atif.json`
+- `artifacts/with-relay.nemo-relay.atif.json`
+- `artifacts/with-relay.nemo-relay.atof.jsonl`
+- `artifacts/summary.json`

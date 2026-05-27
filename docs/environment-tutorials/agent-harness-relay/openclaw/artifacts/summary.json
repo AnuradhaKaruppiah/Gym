@@ -3,8 +3,8 @@
   "agent": "openclaw",
   "without_relay": {
     "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/openclaw_django_13741_rollout_6.jsonl",
-    "atif_path": "/home/anuradhak/projects/nat/external/nemo-gym/data/swe_task/openclaw/without-relay.gym-reconstructed.atif.json",
-    "native_session_jsonl_path": "/home/anuradhak/projects/nat/external/nemo-gym/data/swe_task/openclaw/without-relay.openclaw.session.jsonl",
+    "atif_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/openclaw/artifacts/without-relay.gym-reconstructed.atif.json",
+    "native_session_jsonl_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/openclaw/artifacts/without-relay.openclaw.session.jsonl",
     "native_session_summary": {
       "total_events": 16,
       "event_types": {
@@ -25,8 +25,8 @@
   },
   "with_relay": {
     "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/openclaw_django_13741_relay_rollout_2.jsonl",
-    "atif_path": "/home/anuradhak/projects/nat/external/nemo-gym/data/swe_task/openclaw/with-relay.nemo-relay.atif.json",
-    "native_session_jsonl_path": "/home/anuradhak/projects/nat/external/nemo-gym/data/swe_task/openclaw/with-relay.openclaw.session.jsonl",
+    "atif_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/openclaw/artifacts/with-relay.nemo-relay.atif.json",
+    "native_session_jsonl_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/openclaw/artifacts/with-relay.openclaw.session.jsonl",
     "native_session_summary": {
       "total_events": 16,
       "event_types": {
@@ -48,7 +48,7 @@
     "finished_naturally": true,
     "swebench_resolved": true,
     "patch_path": "/home/anuradhak/projects/nat/.tmp/nemo-gym/openclaw-relay-swebench-verifier/django__django-13741_1f1a5fe6/patch.diff",
-    "note": "NeMoRelay/NeMoFlow plugin emitted normalized ATIF from OpenClaw events. OpenClaw session JSONL is included as the raw harness log."
+    "note": "NeMoRelay plugin emitted normalized ATIF from OpenClaw events. OpenClaw session JSONL is included as the raw harness log."
   },
   "comparison_note": "OpenClaw appears more hook-friendly than OpenCode for this POC: both baseline and Relay runs have a compact native session JSONL with message/tool events, and Relay converts the enabled run into a 20-step ATIF trajectory."
 }

@@ -4,12 +4,12 @@ This directory compares artifacts for the same SWE-bench Verified task with and 
 
 ## Files
 
-- `without-relay.gym-reconstructed.atif.json`: post-hoc ATIF reconstructed from Gym rollout output.
-- `without-relay.openclaw.session.jsonl`: native OpenClaw session log from the baseline run.
-- `with-relay.nemo-relay.atif.json`: ATIF emitted from NeMoRelay/NeMoFlow capture.
-- `with-relay.openclaw.session.jsonl`: native OpenClaw session log from the Relay-enabled run.
-- `summary.json`: compact comparison metadata.
-- `regenerate.py`: refreshes the files in this directory from Gym rollout artifacts.
+- `artifacts/without-relay.gym-reconstructed.atif.json`: post-hoc ATIF reconstructed from Gym rollout output.
+- `artifacts/without-relay.openclaw.session.jsonl`: native OpenClaw session log from the baseline run.
+- `artifacts/with-relay.nemo-relay.atif.json`: ATIF emitted from NeMoRelay capture.
+- `artifacts/with-relay.openclaw.session.jsonl`: native OpenClaw session log from the Relay-enabled run.
+- `artifacts/summary.json`: compact comparison metadata.
+- `regenerate.py`: refreshes the files in `artifacts/` from Gym rollout outputs.
 
 ## Current Snapshot
 
@@ -57,9 +57,9 @@ Install Apptainer separately if it is not already available:
 apptainer --version
 ```
 
-## Set Up NeMoFlow
+## Set Up NeMoRelay
 
-OpenClaw uses the NeMoFlow OpenClaw plugin, not the Python package. For this
+OpenClaw uses the NeMoRelay OpenClaw plugin, not the Python package. For this
 POC, point at the plugin from a local NeMoRelay checkout:
 
 ```bash
@@ -212,15 +212,15 @@ After rerunning the baseline and Relay commands, refresh the checked-in comparis
 ```bash
 cd "${GYM_SOURCE_DIR}"
 
-python3 data/swe_task/openclaw/regenerate.py \
+python3 docs/environment-tutorials/agent-harness-relay/openclaw/regenerate.py \
   --tmp-root "${GYM_OUTPUT_DIR}" \
-  --output-dir "${GYM_SOURCE_DIR}/data/swe_task/openclaw"
+  --output-dir "${GYM_SOURCE_DIR}/docs/environment-tutorials/agent-harness-relay/openclaw/artifacts"
 ```
 
 The script rewrites:
 
-- `without-relay.gym-reconstructed.atif.json`
-- `without-relay.openclaw.session.jsonl`
-- `with-relay.nemo-relay.atif.json`
-- `with-relay.openclaw.session.jsonl`
-- `summary.json`
+- `artifacts/without-relay.gym-reconstructed.atif.json`
+- `artifacts/without-relay.openclaw.session.jsonl`
+- `artifacts/with-relay.nemo-relay.atif.json`
+- `artifacts/with-relay.openclaw.session.jsonl`
+- `artifacts/summary.json`

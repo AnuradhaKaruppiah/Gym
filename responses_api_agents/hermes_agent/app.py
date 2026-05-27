@@ -128,18 +128,32 @@ class _HermesNemoRelayCapture:
             if python_path not in sys.path:
                 sys.path.insert(0, python_path)
 
-        from nemo_flow import (  # noqa: PLC0415
-            AtifExporter,
-            AtofExporter,
-            AtofExporterConfig,
-            AtofExporterMode,
-            LLMRequest,
-            ScopeType,
-            llm,
-            scope,
-            subscribers,
-            tools,
-        )
+        try:
+            from nemo_relay import (  # noqa: PLC0415
+                AtifExporter,
+                AtofExporter,
+                AtofExporterConfig,
+                AtofExporterMode,
+                LLMRequest,
+                ScopeType,
+                llm,
+                scope,
+                subscribers,
+                tools,
+            )
+        except ImportError:
+            from nemo_flow import (  # type: ignore[no-redef]  # noqa: PLC0415
+                AtifExporter,
+                AtofExporter,
+                AtofExporterConfig,
+                AtofExporterMode,
+                LLMRequest,
+                ScopeType,
+                llm,
+                scope,
+                subscribers,
+                tools,
+            )
 
         self._llm = llm
         self._scope = scope

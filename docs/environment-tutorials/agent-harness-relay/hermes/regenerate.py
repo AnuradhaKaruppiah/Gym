@@ -93,6 +93,7 @@ def _step_from_output(index: int, item: dict[str, Any], timestamp: str) -> dict[
             "step_id": step_id,
             "timestamp": timestamp,
             "source": "system",
+            "message": "",
             "observation": {
                 "results": [
                     {
@@ -117,11 +118,36 @@ def _step_from_output(index: int, item: dict[str, Any], timestamp: str) -> dict[
     }
 
 
+def _response_metadata(rollout: dict[str, Any]) -> dict[str, Any]:
+    metadata = rollout.get("response", {}).get("metadata", {})
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _rollout_patch_path(rollout: dict[str, Any]) -> Path | None:
+    output_dir = rollout.get("swebench_output_dir")
+    if not output_dir:
+        return None
+    return Path(output_dir) / "patch.diff"
+
+
+def _patch_text(rollout: dict[str, Any], patch_path: Path | None) -> str | None:
+    if patch_path and patch_path.exists():
+        return patch_path.read_text()
+    metadata_patch = _response_metadata(rollout).get("patch")
+    if isinstance(metadata_patch, str) and metadata_patch:
+        return metadata_patch
+    return None
+
+
 def _default_tmp_root() -> Path:
     env_value = os.environ.get("GYM_OUTPUT_DIR")
     if env_value:
         return Path(env_value)
-    return Path(__file__).resolve().parents[5] / ".tmp/nemo-gym"
+    return Path(__file__).resolve().parents[6] / ".tmp/nemo-gym"
+
+
+def _default_output_dir() -> Path:
+    return Path(__file__).resolve().parent / "artifacts"
 
 
 def regenerate(
@@ -134,13 +160,18 @@ def regenerate(
 
     no_relay_rollout_path = no_relay_rollout_path or tmp_root / "hermes_django_13741_rollout.jsonl"
     relay_rollout_path = relay_rollout_path or tmp_root / "hermes_django_13741_relay_rollout.jsonl"
-    relay_atof_path = _latest_file(tmp_root / "hermes-nemo-relay", "**/hermes.atof.jsonl")
-    relay_atif_path = _latest_file(tmp_root / "hermes-nemo-relay", "**/*.atif.json")
 
     no_relay = _read_jsonl_one(no_relay_rollout_path)
     relay = _read_jsonl_one(relay_rollout_path)
-    no_relay_patch_path = Path(no_relay["swebench_output_dir"]) / "patch.diff"
-    relay_patch_path = Path(relay["swebench_output_dir"]) / "patch.diff"
+    relay_metadata = _response_metadata(relay)
+    relay_atof_path = Path(
+        relay_metadata.get("nemo_relay_atof_path") or _latest_file(tmp_root / "hermes-nemo-relay", "**/hermes.atof.jsonl")
+    )
+    relay_atif_path = Path(
+        relay_metadata.get("nemo_relay_atif_path") or _latest_file(tmp_root / "hermes-nemo-relay", "**/*.atif.json")
+    )
+    no_relay_patch_path = _rollout_patch_path(no_relay)
+    relay_patch_path = _rollout_patch_path(relay)
     relay_atif = json.loads(relay_atif_path.read_text())
     timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -181,7 +212,7 @@ def regenerate(
             "instance_id": INSTANCE_ID,
             "agent_ref": no_relay.get("agent_ref"),
             "swebench_output_dir": no_relay.get("swebench_output_dir"),
-            "patch": no_relay_patch_path.read_text() if no_relay_patch_path.exists() else None,
+            "patch": _patch_text(no_relay, no_relay_patch_path),
             "limitations": [
                 "Gym rollout output stores Responses API output items, not Relay event capture.",
                 "Timestamps in this reconstructed ATIF were generated during post-processing.",
@@ -215,7 +246,7 @@ def regenerate(
             "turns_used": no_relay.get("turns_used"),
             "finished_naturally": no_relay.get("finished_naturally"),
             "swebench_resolved": no_relay.get("swebench_resolved"),
-            "patch_path": str(no_relay_patch_path),
+            "patch_path": str(no_relay_patch_path) if no_relay_patch_path else None,
             "note": "Post-hoc ATIF reconstructed from Gym Responses output items; baseline path uses Gym output without Relay event capture.",
         },
         "with_relay": {
@@ -231,10 +262,10 @@ def regenerate(
             "turns_used": relay.get("turns_used"),
             "finished_naturally": relay.get("finished_naturally"),
             "swebench_resolved": relay.get("swebench_resolved"),
-            "patch_path": str(relay_patch_path),
+            "patch_path": str(relay_patch_path) if relay_patch_path else None,
             "note": "Adapter-level NeMoRelay capture around Hermes callbacks emitted ATOF plus normalized ATIF.",
         },
-        "comparison_note": "Hermes gives a good third data point: the baseline Gym response already has tool call/output items, and Relay adds ATOF plus a 50-step ATIF trajectory. The ATIF is currently noisier than OpenClaw because the adapter projects Hermes callbacks and assistant messages rather than consuming a native harness session log.",
+        "comparison_note": "Hermes gives a good third data point: the baseline Gym response already has tool call/output items, and Relay adds ATOF plus a normalized ATIF trajectory. The ATIF is currently noisier than OpenClaw because the adapter projects Hermes callbacks and assistant messages rather than consuming a native harness session log.",
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary
@@ -251,8 +282,8 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path(__file__).resolve().parent,
-        help="Directory where this comparison bundle should be written.",
+        default=_default_output_dir(),
+        help="Directory where this comparison bundle's JSON/JSONL artifacts should be written.",
     )
     parser.add_argument(
         "--no-relay-rollout",
@@ -278,8 +309,8 @@ def main() -> None:
     if args.repo_root is not None:
         if tmp_root is None:
             tmp_root = args.repo_root / ".tmp/nemo-gym"
-        if output_dir == Path(__file__).resolve().parent:
-            output_dir = args.repo_root / "external/nemo-gym/data/swe_task/hermes"
+        if output_dir == _default_output_dir():
+            output_dir = args.repo_root / "external/nemo-gym/docs/environment-tutorials/agent-harness-relay/hermes/artifacts"
     if tmp_root is None:
         tmp_root = _default_tmp_root()
 
