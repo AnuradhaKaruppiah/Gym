@@ -246,6 +246,30 @@ class TestConfigYaml:
         written = json.loads((Path(config_home) / "opencode" / "opencode.json").read_text())
         assert written["provider"]["nvidia"]["models"]["opus-frontier"]["id"] == "model-id"
 
+    def test_nemo_relay_disabled_does_not_require_plugin_files(self, tmp_path: Path) -> None:
+        missing_server_module = tmp_path / "missing" / "server.js"
+        agent = _make_agent(
+            workspace_root=str(tmp_path / "workspaces"),
+            opencode_config={"provider": {"nvidia": {"models": {"opus-frontier": {"id": "model-id"}}}}},
+            nemo_relay={
+                "enabled": False,
+                "server_module_path": str(missing_server_module),
+                "output_dir": str(tmp_path / "relay-root"),
+            },
+        )
+        work_dir = tmp_path / "workspaces" / "task" / "testbed"
+        work_dir.mkdir(parents=True)
+
+        relay_dir = agent._resolve_nemo_relay_output_dir(str(work_dir))
+        config_home = agent._write_opencode_config(str(work_dir), relay_dir)
+
+        assert relay_dir is None
+        assert not missing_server_module.exists()
+        assert not (tmp_path / "relay-root").exists()
+        written = json.loads((Path(config_home) / "opencode" / "opencode.json").read_text())
+        assert "plugin" not in written
+        assert written["provider"]["nvidia"]["models"]["opus-frontier"]["id"] == "model-id"
+
     def test_write_opencode_config_with_nemo_relay_plugin(self, tmp_path: Path) -> None:
         server_module = tmp_path / "server.js"
         server_module.write_text("export default async function server() { return {}; }\n")

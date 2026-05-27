@@ -98,3 +98,26 @@ opencode_agent:
   adapted from the Harbor OpenCode smoke test.
 - The verifier stores per-run artifacts under `swebench_results_root`, including
   the prediction JSONL, patch diff, copied SWE-bench report, and test logs.
+
+## Optional NeMoRelay Capture Without Hard Dependency
+
+NeMoRelay capture is opt-in. The OpenCode agent does not import NeMoRelay from
+Python or require the plugin files when `nemo_relay.enabled=false`.
+
+When enabled, the agent writes a per-run OpenCode plugin wrapper into the
+isolated OpenCode config directory. That wrapper points OpenCode at the
+configured NeMoRelay plugin module and passes the run-specific ATOF/ATIF output
+paths. The Gym response metadata then includes the discovered Relay artifacts:
+
+- `nemo_relay_output_dir`
+- `nemo_relay_atof_path`
+- `nemo_relay_atif_paths`
+- `nemo_relay_log_path`
+
+Minimal local override:
+
+```bash
++opencode_agent.responses_api_agents.opencode_agent.nemo_relay.enabled=true \
++opencode_agent.responses_api_agents.opencode_agent.nemo_relay.server_module_path=/path/to/nemo-relay/integrations/opencode/server.js \
++opencode_agent.responses_api_agents.opencode_agent.nemo_relay.output_dir=/tmp/opencode-nemo-relay
+```
