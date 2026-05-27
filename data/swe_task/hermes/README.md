@@ -30,12 +30,33 @@ Relay-enabled Gym/Hermes:
 
 Hermes is a useful third comparison point: the baseline Gym response already has structured tool call/output items, while Relay adds raw ATOF plus normalized ATIF. The current Hermes ATIF is noisier than OpenClaw because the adapter projects Hermes callbacks and assistant messages rather than consuming a native harness session log.
 
+## Set Up Gym Environment
+
+Start from a Gym checkout with Python 3.12+ and `uv` available.
+
+```bash
+export GYM_SOURCE_DIR=/path/to/Gym
+cd "${GYM_SOURCE_DIR}"
+
+uv venv --python 3.12
+source .venv/bin/activate
+uv sync
+
+.venv/bin/ng_run +help=true
+.venv/bin/ng_collect_rollouts +help=true
+```
+
+Install Apptainer separately if it is not already available:
+
+```bash
+apptainer --version
+```
+
 ## Configure Paths
 
 The commands need a Gym checkout, an output directory, model credentials, the SWE-bench image directory, and the NeMoRelay Python package path for the Relay run.
 
 ```bash
-export GYM_SOURCE_DIR=/path/to/Gym
 export GYM_OUTPUT_DIR=/path/to/gym-output
 export SWEBENCH_IMAGE_DIR="${GYM_OUTPUT_DIR}/images"
 export NVIDIA_ENV_FILE=/path/to/nvidia.env

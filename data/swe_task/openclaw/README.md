@@ -31,12 +31,37 @@ Relay-enabled Gym/OpenClaw:
 
 OpenClaw is a useful comparison point because the baseline already emits a compact native session JSONL, while Relay turns the enabled run into a normalized ATIF trajectory that can be compared across harnesses.
 
+## Set Up Gym Environment
+
+Start from a Gym checkout with Python 3.12+, `uv`, and Node/npm available. Node is needed because the OpenClaw run below launches `npx -y openclaw@2026.5.22`.
+
+```bash
+export GYM_SOURCE_DIR=/path/to/Gym
+cd "${GYM_SOURCE_DIR}"
+
+uv venv --python 3.12
+source .venv/bin/activate
+uv sync
+
+.venv/bin/ng_run +help=true
+.venv/bin/ng_collect_rollouts +help=true
+
+node --version
+npm --version
+npx --version
+```
+
+Install Apptainer separately if it is not already available:
+
+```bash
+apptainer --version
+```
+
 ## Configure Paths
 
 The commands need a Gym checkout, an output directory, model credentials, the SWE-bench image directory, and the NeMoRelay OpenClaw plugin path for the Relay run.
 
 ```bash
-export GYM_SOURCE_DIR=/path/to/Gym
 export GYM_OUTPUT_DIR=/path/to/gym-output
 export SWEBENCH_IMAGE_DIR="${GYM_OUTPUT_DIR}/images"
 export NVIDIA_ENV_FILE=/path/to/nvidia.env
