@@ -31,6 +31,17 @@ opencode_agent:
       thinking: true
       system_prompt: null
       extra_args: []
+      nemo_relay:
+        enabled: false
+        plugin_package: nemo-flow-opencode
+        server_module_path: null
+        wrapper_filename: nemo-relay-opencode-plugin.mjs
+        output_dir: null
+        log_filename: opencode-plugin.log
+        atof_filename: opencode.atof.jsonl
+        atif_filename_template: "opencode-{session_id}.atif.json"
+        agent_name: opencode
+        mode: overwrite
       verify_swebench: false
       swebench_setup_dir: null
       swebench_results_root: outputs/opencode_agent/swebench-verifier
@@ -69,6 +80,13 @@ opencode_agent:
   commit, runs OpenCode in that host workspace, and captures `git diff`.
 - `opencode_config` is written to an isolated per-run OpenCode config home.
   This is required for provider aliases such as `nvidia/opus-frontier`.
+- `nemo_relay.enabled=true` injects NeMo Relay into the isolated OpenCode
+  config. For local PR testing, set `nemo_relay.server_module_path` to the
+  public plugin module, for example
+  `/path/to/nemo-relay/integrations/opencode/server.js`; the adapter writes a
+  per-run wrapper plugin so OpenCode can load it by `file://` URL and receive
+  the configured ATOF/ATIF output paths. Without `server_module_path`, the
+  adapter falls back to the package name in `plugin_package`.
 - For benchmark scoring, set `resources_server` to a verifier server or extend
   this agent with benchmark-specific verification.
 - For SWE-bench scoring, set `verify_swebench=true` and provide

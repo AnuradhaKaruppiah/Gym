@@ -18,6 +18,17 @@ opencode_agent:
       thinking: true
       system_prompt: null
       extra_args: []
+      nemo_relay:
+        enabled: false
+        plugin_package: nemo-flow-opencode
+        server_module_path: null
+        wrapper_filename: nemo-relay-opencode-plugin.mjs
+        output_dir: null
+        log_filename: opencode-plugin.log
+        atof_filename: opencode.atof.jsonl
+        atif_filename_template: "opencode-{session_id}.atif.json"
+        agent_name: opencode
+        mode: overwrite
       verify_swebench: false
       swebench_setup_dir: null
       swebench_results_root: outputs/opencode_agent/swebench-verifier

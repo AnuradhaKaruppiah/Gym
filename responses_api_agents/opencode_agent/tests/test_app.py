@@ -65,6 +65,10 @@ class TestSanity:
         assert cfg.timeout == 900
         assert cfg.thinking is True
         assert cfg.opencode_config == {}
+        assert cfg.nemo_relay.enabled is False
+        assert cfg.nemo_relay.plugin_package == "nemo-flow-opencode"
+        assert cfg.nemo_relay.server_module_path is None
+        assert cfg.nemo_relay.wrapper_filename == "nemo-relay-opencode-plugin.mjs"
         assert cfg.verify_swebench is False
         assert cfg.swebench_setup_dir is None
         assert cfg.swebench_results_root == "outputs/opencode_agent/swebench-verifier"
@@ -200,6 +204,11 @@ class TestConfigYaml:
         assert inner["model"] == "nvidia/opus-frontier"
         assert inner["concurrency"] == 8
         assert inner["container_formatter"] is None
+        assert inner["nemo_relay"]["enabled"] is False
+        assert inner["nemo_relay"]["plugin_package"] == "nemo-flow-opencode"
+        assert inner["nemo_relay"]["server_module_path"] is None
+        assert inner["nemo_relay"]["wrapper_filename"] == "nemo-relay-opencode-plugin.mjs"
+        assert inner["nemo_relay"]["atof_filename"] == "opencode.atof.jsonl"
         assert inner["verify_swebench"] is False
         assert inner["swebench_setup_dir"] is None
         assert inner["swebench_results_root"] == "outputs/opencode_agent/swebench-verifier"
@@ -236,3 +245,54 @@ class TestConfigYaml:
         assert config_home == str(work_dir.parent / ".opencode-config")
         written = json.loads((Path(config_home) / "opencode" / "opencode.json").read_text())
         assert written["provider"]["nvidia"]["models"]["opus-frontier"]["id"] == "model-id"
+
+    def test_write_opencode_config_with_nemo_relay_plugin(self, tmp_path: Path) -> None:
+        server_module = tmp_path / "server.js"
+        server_module.write_text("export default async function server() { return {}; }\n")
+        agent = _make_agent(
+            workspace_root=str(tmp_path / "workspaces"),
+            opencode_config={"provider": {"nvidia": {"models": {"opus-frontier": {"id": "model-id"}}}}},
+            nemo_relay={
+                "enabled": True,
+                "server_module_path": str(server_module),
+                "output_dir": str(tmp_path / "relay-root"),
+            },
+        )
+        work_dir = tmp_path / "workspaces" / "task" / "testbed"
+        work_dir.mkdir(parents=True)
+        relay_dir = agent._resolve_nemo_relay_output_dir(str(work_dir))
+
+        config_home = agent._write_opencode_config(str(work_dir), relay_dir)
+
+        written = json.loads((Path(config_home) / "opencode" / "opencode.json").read_text())
+        plugin_uri = written["plugin"][0]
+        assert plugin_uri.startswith("file://")
+        wrapper_path = Path(plugin_uri.removeprefix("file://"))
+        assert wrapper_path.name == "nemo-relay-opencode-plugin.mjs"
+        wrapper = wrapper_path.read_text()
+        assert server_module.as_uri() in wrapper
+        assert '"logPath":' in wrapper
+        assert str(relay_dir / "opencode-plugin.log") in wrapper
+        plugin_options = json.loads(wrapper.split("const options = ", 1)[1].split(";\n\n", 1)[0])
+        assert plugin_options["enabled"] is True
+        assert plugin_options["logPath"] == str(relay_dir / "opencode-plugin.log")
+        observability = plugin_options["plugins"]["components"][0]["config"]
+        assert observability["atof"]["output_directory"] == str(relay_dir)
+        assert observability["atof"]["filename"] == "opencode.atof.jsonl"
+        assert observability["atif"]["filename_template"] == "opencode-{session_id}.atif.json"
+        assert written["provider"]["nvidia"]["models"]["opus-frontier"]["id"] == "model-id"
+
+    def test_nemo_relay_metadata_discovers_artifacts(self, tmp_path: Path) -> None:
+        agent = _make_agent(nemo_relay={"enabled": True})
+        relay_dir = tmp_path / "nemo-relay"
+        relay_dir.mkdir()
+        (relay_dir / "opencode.atof.jsonl").write_text("{}\n")
+        (relay_dir / "opencode-plugin.log").write_text("{}\n")
+        (relay_dir / "opencode-session-1.atif.json").write_text("{}")
+
+        metadata = agent._nemo_relay_metadata(relay_dir)
+
+        assert metadata["nemo_relay_output_dir"] == str(relay_dir)
+        assert metadata["nemo_relay_atof_path"] == str(relay_dir / "opencode.atof.jsonl")
+        assert json.loads(metadata["nemo_relay_atif_paths"]) == [str(relay_dir / "opencode-session-1.atif.json")]
+        assert metadata["nemo_relay_log_path"] == str(relay_dir / "opencode-plugin.log")

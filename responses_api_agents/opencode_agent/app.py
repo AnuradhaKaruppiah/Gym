@@ -27,7 +27,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from fastapi import Request
-from pydantic import ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from nemo_gym.base_resources_server import BaseRunRequest, BaseVerifyResponse
 from nemo_gym.base_responses_api_agent import (
@@ -165,6 +165,19 @@ def parse_opencode_jsonl(stdout: str) -> tuple[list[Any], dict[str, int]]:
     return output_items, {"input_tokens": input_tokens, "output_tokens": output_tokens}
 
 
+class NemoRelayConfig(BaseModel):
+    enabled: bool = False
+    plugin_package: str = "nemo-flow-opencode"
+    server_module_path: Optional[str] = None
+    wrapper_filename: str = "nemo-relay-opencode-plugin.mjs"
+    output_dir: Optional[str] = None
+    log_filename: str = "opencode-plugin.log"
+    atof_filename: str = "opencode.atof.jsonl"
+    atif_filename_template: str = "opencode-{session_id}.atif.json"
+    agent_name: str = "opencode"
+    mode: str = "overwrite"
+
+
 class OpenCodeAgentConfig(BaseResponsesAPIAgentConfig):
     resources_server: Optional[ResourcesServerRef] = None
     model_server: Optional[ModelServerRef] = None
@@ -183,6 +196,7 @@ class OpenCodeAgentConfig(BaseResponsesAPIAgentConfig):
     system_prompt: Optional[str] = None
     extra_args: list[str] = []
     opencode_config: dict[str, Any] = Field(default_factory=dict)
+    nemo_relay: NemoRelayConfig = Field(default_factory=NemoRelayConfig)
     verify_swebench: bool = False
     swebench_setup_dir: Optional[str] = None
     swebench_results_root: str = "outputs/opencode_agent/swebench-verifier"
@@ -423,20 +437,162 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
             "swebench_output_dir": str(result_dir),
         }
 
-    def _write_opencode_config(self, work_dir: Optional[str]) -> Optional[str]:
-        if not self.config.opencode_config:
+    def _resolve_nemo_relay_output_dir(self, work_dir: Optional[str]) -> Optional[Path]:
+        if not self.config.nemo_relay.enabled:
+            return None
+
+        if work_dir:
+            run_name = Path(work_dir).parent.name
+        else:
+            run_name = f"opencode_{uuid4().hex[:8]}"
+
+        if self.config.nemo_relay.output_dir:
+            output_root = Path(self.config.nemo_relay.output_dir).expanduser()
+            if not output_root.is_absolute():
+                output_root = Path.cwd() / output_root
+            relay_dir = output_root / run_name
+        elif work_dir:
+            relay_dir = Path(work_dir).parent / "nemo-relay"
+        else:
+            relay_dir = Path(self.config.workspace_root).expanduser() / "nemo-relay" / run_name
+            if not relay_dir.is_absolute():
+                relay_dir = Path.cwd() / relay_dir
+
+        relay_dir.mkdir(parents=True, exist_ok=True)
+        return relay_dir
+
+    def _nemo_relay_options(self, relay_dir: Path) -> dict[str, Any]:
+        relay = self.config.nemo_relay
+        return {
+            "enabled": True,
+            "logPath": str(relay_dir / relay.log_filename),
+            "plugins": {
+                "version": 1,
+                "components": [
+                    {
+                        "kind": "observability",
+                        "enabled": True,
+                        "config": {
+                            "version": 1,
+                            "atof": {
+                                "enabled": True,
+                                "output_directory": str(relay_dir),
+                                "filename": relay.atof_filename,
+                                "mode": relay.mode,
+                            },
+                            "atif": {
+                                "enabled": True,
+                                "agent_name": relay.agent_name,
+                                "output_directory": str(relay_dir),
+                                "filename_template": relay.atif_filename_template,
+                            },
+                        },
+                    }
+                ],
+            },
+        }
+
+    def _resolve_nemo_relay_server_module_path(self) -> Optional[Path]:
+        relay = self.config.nemo_relay
+        if not relay.server_module_path:
+            return None
+
+        module_path = Path(relay.server_module_path).expanduser()
+        if not module_path.is_absolute():
+            module_path = Path.cwd() / module_path
+        module_path = module_path.resolve()
+        if not module_path.exists():
+            raise FileNotFoundError(f"NeMo Relay OpenCode plugin module is missing: {module_path}")
+        return module_path
+
+    def _write_nemo_relay_wrapper(self, config_dir: Path, relay_dir: Path) -> Optional[str]:
+        module_path = self._resolve_nemo_relay_server_module_path()
+        if not module_path:
+            return None
+
+        options = json.dumps(self._nemo_relay_options(relay_dir), indent=2)
+        wrapper_path = config_dir / self.config.nemo_relay.wrapper_filename
+        wrapper_path.write_text(
+            "\n".join(
+                [
+                    f'import {{ server as createNemoRelayOpenCodeServer }} from "{module_path.as_uri()}";',
+                    "",
+                    f"const options = {options};",
+                    "",
+                    "export default async function nemoRelayOpenCodePlugin(input) {",
+                    "  return createNemoRelayOpenCodeServer(input, options);",
+                    "}",
+                    "",
+                ]
+            )
+        )
+        return wrapper_path.as_uri()
+
+    def _nemo_relay_plugin_entry(self, config_dir: Path, relay_dir: Path) -> str:
+        wrapper_uri = self._write_nemo_relay_wrapper(config_dir, relay_dir)
+        if wrapper_uri:
+            return wrapper_uri
+
+        if self.config.nemo_relay.output_dir:
+            LOG.warning(
+                "nemo_relay.output_dir is ignored without nemo_relay.server_module_path because current OpenCode "
+                "config only accepts string plugin specifiers"
+            )
+        return self.config.nemo_relay.plugin_package
+
+    def _build_opencode_config(self, relay_dir: Optional[Path], config_dir: Path) -> dict[str, Any]:
+        config = self._deep_merge({}, copy.deepcopy(self.config.opencode_config))
+        if not relay_dir:
+            return config
+
+        relay = self.config.nemo_relay
+        entry = self._nemo_relay_plugin_entry(config_dir, relay_dir)
+        plugins = config.get("plugin")
+        if plugins is None:
+            config["plugin"] = [entry]
+        elif isinstance(plugins, list):
+            config["plugin"] = [
+                plugin
+                for plugin in plugins
+                if not (
+                    plugin == relay.plugin_package
+                    or (isinstance(plugin, list) and plugin and plugin[0] == relay.plugin_package)
+                )
+            ] + [entry]
+        else:
+            config["plugin"] = [plugins, entry]
+        return config
+
+    def _write_opencode_config(self, work_dir: Optional[str], relay_dir: Optional[Path] = None) -> Optional[str]:
+        if not self.config.opencode_config and not relay_dir:
             return None
 
         config_home = Path(work_dir).parent / ".opencode-config" if work_dir else Path(self.config.workspace_root)
         config_dir = config_home / "opencode"
         config_dir.mkdir(parents=True, exist_ok=True)
-        config = self._deep_merge({}, copy.deepcopy(self.config.opencode_config))
+        config = self._build_opencode_config(relay_dir, config_dir)
         (config_dir / "opencode.json").write_text(json.dumps(config, indent=2))
         return str(config_home)
 
+    def _nemo_relay_metadata(self, relay_dir: Optional[Path]) -> dict[str, str]:
+        if not relay_dir:
+            return {}
+
+        relay = self.config.nemo_relay
+        atif_glob = relay.atif_filename_template.replace("{session_id}", "*")
+        atif_paths = sorted(str(path) for path in relay_dir.glob(atif_glob))
+        atof_path = relay_dir / relay.atof_filename
+        log_path = relay_dir / relay.log_filename
+        return {
+            "nemo_relay_output_dir": str(relay_dir),
+            "nemo_relay_atof_path": str(atof_path) if atof_path.exists() else "",
+            "nemo_relay_atif_paths": json.dumps(atif_paths),
+            "nemo_relay_log_path": str(log_path) if log_path.exists() else "",
+        }
+
     async def _run_opencode(
         self, instruction: str, system_prompt: Optional[str], work_dir: Optional[str]
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, Optional[Path]]:
         prompt = instruction
         if system_prompt:
             prompt = f"{system_prompt}\n\n{instruction}"
@@ -460,9 +616,12 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
             env["OPENAI_BASE_URL"] = base_url
         if self.config.openai_api_key:
             env["OPENAI_API_KEY"] = self.config.openai_api_key
-        config_home = self._write_opencode_config(work_dir)
+        relay_dir = self._resolve_nemo_relay_output_dir(work_dir)
+        config_home = self._write_opencode_config(work_dir, relay_dir)
         if config_home:
             env["XDG_CONFIG_HOME"] = config_home
+        if relay_dir:
+            env.setdefault("OPENCODE_DISABLE_DEFAULT_PLUGINS", "true")
         env["OPENCODE_FAKE_VCS"] = "git"
 
         proc = await asyncio.create_subprocess_exec(
@@ -477,12 +636,12 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
             proc.kill()
             await proc.communicate()
             LOG.warning("opencode timed out after %ds", self.config.timeout)
-            return "", self.config.model
+            return "", self.config.model, relay_dir
 
         if proc.returncode not in (0, None):
             LOG.warning("opencode exited %d: %s", proc.returncode, stderr.decode(errors="replace")[:500])
 
-        return stdout.decode(errors="replace"), self.config.model
+        return stdout.decode(errors="replace"), self.config.model, relay_dir
 
     async def responses(
         self,
@@ -499,7 +658,7 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
         metadata = getattr(body, "metadata", None) or {}
 
         work_dir = await self._materialize_swebench_workspace(metadata)
-        stdout, model_name = await self._run_opencode(user_message, system_prompt, work_dir)
+        stdout, model_name, relay_dir = await self._run_opencode(user_message, system_prompt, work_dir)
         output_items, usage = parse_opencode_jsonl(stdout)
         patch = await self._collect_patch(work_dir)
 
@@ -542,7 +701,8 @@ class OpenCodeAgent(SimpleResponsesAPIAgent):
                 "patch": patch,
                 "patch_exists": str(bool(patch.strip())).lower(),
                 "instance_id": str(metadata.get("instance_id") or ""),
-            },
+            }
+            | self._nemo_relay_metadata(relay_dir),
         )
 
     async def run(self, request: Request, body: OpenCodeAgentRunRequest) -> OpenCodeAgentVerifyResponse:
