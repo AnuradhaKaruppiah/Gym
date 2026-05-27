@@ -265,7 +265,7 @@ def regenerate(
             "patch_path": str(relay_patch_path) if relay_patch_path else None,
             "note": "Adapter-level NeMoRelay capture around Hermes callbacks emitted ATOF plus normalized ATIF.",
         },
-        "comparison_note": "Hermes gives a good third data point: the baseline Gym response already has tool call/output items, and Relay adds ATOF plus a normalized ATIF trajectory. The ATIF is currently noisier than OpenClaw because the adapter projects Hermes callbacks and assistant messages rather than consuming a native harness session log.",
+        "comparison_note": "Hermes is useful for comparison because the baseline Gym response already has tool call/output items, and Relay adds ATOF plus a normalized ATIF trajectory. The ATIF is currently noisier than OpenClaw because the adapter projects Hermes callbacks and assistant messages rather than consuming a native harness session log.",
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary

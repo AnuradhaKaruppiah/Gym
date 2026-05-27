@@ -31,7 +31,7 @@ Relay-enabled Gym/Hermes:
 - ATIF source split: 31 agent, 31 user, 60 system
 - 31 turns used by the Hermes agent
 
-Hermes is a useful third comparison point: the baseline Gym response already has structured tool call/output items, while Relay adds raw ATOF plus normalized ATIF. The current Hermes ATIF is noisier than OpenClaw because the adapter projects Hermes callbacks and assistant messages rather than consuming a native harness session log.
+Hermes is useful for comparison because the baseline Gym response already has structured tool call/output items, while Relay adds raw ATOF plus normalized ATIF. The current Hermes ATIF is noisier than OpenClaw because the adapter projects Hermes callbacks and assistant messages rather than consuming a native harness session log.
 
 ## Set Up Gym Environment
 
