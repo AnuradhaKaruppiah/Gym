@@ -39,6 +39,15 @@ def test_config_yaml_parses():
     assert inner["container_formatter"] is None
     assert inner["apptainer_command"] == "apptainer"
     assert inner["setup_timeout"] == 900
+    assert inner["nemo_relay"] == {
+        "enabled": False,
+        "python_path": None,
+        "output_dir": None,
+        "atof_filename": "hermes.atof.jsonl",
+        "atif_filename_template": "hermes-{session_id}.atif.json",
+        "agent_name": "hermes",
+        "mode": "overwrite",
+    }
     assert inner["verify_swebench"] is False
     assert inner["swebench_setup_dir"] is None
     assert inner["swebench_results_root"] == "outputs/hermes_agent/swebench-verifier"

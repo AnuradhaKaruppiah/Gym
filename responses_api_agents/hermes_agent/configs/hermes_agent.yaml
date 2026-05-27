@@ -20,6 +20,14 @@ hermes_agent:
       container_formatter: null
       apptainer_command: apptainer
       setup_timeout: 900
+      nemo_relay:
+        enabled: false
+        python_path: null
+        output_dir: null
+        atof_filename: hermes.atof.jsonl
+        atif_filename_template: "hermes-{session_id}.atif.json"
+        agent_name: hermes
+        mode: overwrite
       verify_swebench: false
       swebench_setup_dir: null
       swebench_results_root: outputs/hermes_agent/swebench-verifier

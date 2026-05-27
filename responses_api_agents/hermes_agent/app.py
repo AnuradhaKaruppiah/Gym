@@ -14,17 +14,19 @@
 # limitations under the License.
 
 import asyncio
+import json
 import logging
 import os
 import sys
 from asyncio import Semaphore
+from pathlib import Path
 from time import time
 from typing import Any, Optional
 from uuid import uuid4
 
 import model_tools  # noqa: F401  # fail-fast if hermes-agent isn't installed
 from fastapi import Request
-from pydantic import ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from nemo_gym.base_resources_server import BaseRunRequest, BaseVerifyResponse
 from nemo_gym.base_responses_api_agent import (
@@ -101,6 +103,155 @@ def _trajectory_to_output_items(messages, n_input):
 LOG = logging.getLogger(__name__)
 
 
+class HermesNemoRelayConfig(BaseModel):
+    enabled: bool = False
+    python_path: Optional[str] = None
+    output_dir: Optional[str] = None
+    atof_filename: str = "hermes.atof.jsonl"
+    atif_filename_template: str = "hermes-{session_id}.atif.json"
+    agent_name: str = "hermes"
+    mode: str = "overwrite"
+
+
+class _HermesNemoRelayCapture:
+    def __init__(
+        self,
+        *,
+        relay_dir: Path,
+        config: HermesNemoRelayConfig,
+        model_name: str,
+        input_text: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        if config.python_path:
+            python_path = str(Path(config.python_path).expanduser().resolve())
+            if python_path not in sys.path:
+                sys.path.insert(0, python_path)
+
+        from nemo_flow import (  # noqa: PLC0415
+            AtifExporter,
+            AtofExporter,
+            AtofExporterConfig,
+            AtofExporterMode,
+            LLMRequest,
+            ScopeType,
+            llm,
+            scope,
+            subscribers,
+            tools,
+        )
+
+        self._llm = llm
+        self._scope = scope
+        self._subscribers = subscribers
+        self._tools = tools
+        self._LLMRequest = LLMRequest
+        self.relay_dir = relay_dir
+        self.config = config
+        self.session_id = f"hermes-{uuid4().hex[:8]}"
+        self.atof_path = relay_dir / config.atof_filename
+        self.atif_path = relay_dir / config.atif_filename_template.format(session_id=self.session_id)
+        self._tool_handles: dict[str, Any] = {}
+
+        atof_config = AtofExporterConfig()
+        atof_config.output_directory = str(relay_dir)
+        atof_config.filename = config.atof_filename
+        atof_config.mode = AtofExporterMode.Overwrite if config.mode == "overwrite" else AtofExporterMode.Append
+        self._atof_exporter = AtofExporter(atof_config)
+        self._atof_subscriber = f"hermes_atof_{uuid4().hex}"
+        self._atof_exporter.register(self._atof_subscriber)
+
+        self._atif_exporter = AtifExporter(
+            self.session_id,
+            config.agent_name,
+            "0.1.0",
+            model_name=model_name,
+            extra={
+                "gym_agent": "hermes_agent",
+                "instance_id": str(metadata.get("instance_id") or ""),
+            },
+        )
+        self._atif_subscriber = f"hermes_atif_{uuid4().hex}"
+        self._atif_exporter.register(self._atif_subscriber)
+
+        self._agent_handle = scope.push(
+            config.agent_name,
+            ScopeType.Agent,
+            input={
+                "prompt": input_text,
+                "metadata": {
+                    "instance_id": str(metadata.get("instance_id") or ""),
+                    "dataset_name": str(metadata.get("dataset_name") or ""),
+                },
+            },
+        )
+
+    def step(self, iteration: int, previous_tools: list[str]) -> None:
+        self._scope.event(
+            "hermes_step",
+            handle=self._agent_handle,
+            data={"iteration": iteration, "previous_tools": previous_tools},
+        )
+
+    def tool_start(self, call_id: str, name: str, args: dict[str, Any]) -> None:
+        self._tool_handles[call_id] = self._tools.call(name, args, handle=self._agent_handle)
+
+    def tool_complete(self, call_id: str, name: str, args: dict[str, Any], result: Any) -> None:
+        handle = self._tool_handles.pop(call_id, None)
+        if handle is None:
+            handle = self._tools.call(name, args, handle=self._agent_handle)
+        self._tools.call_end(handle, result)
+
+    def add_llm_projection(self, messages: list[dict[str, Any]], model_name: str) -> None:
+        for index, message in enumerate(messages):
+            if not isinstance(message, dict) or message.get("role") != "assistant":
+                continue
+            request = self._LLMRequest(
+                {},
+                {
+                    "messages": [],
+                    "model": model_name,
+                    "projection_index": index,
+                },
+            )
+            handle = self._llm.call(
+                "hermes_assistant_message",
+                request,
+                handle=self._agent_handle,
+                model_name=model_name,
+                metadata={"projection": True},
+            )
+            self._llm.call_end(
+                handle,
+                {
+                    "role": "assistant",
+                    "content": message.get("content") or "",
+                    "tool_calls": message.get("tool_calls") or [],
+                },
+            )
+
+    def close(self, output: dict[str, Any]) -> dict[str, str]:
+        for handle in list(self._tool_handles.values()):
+            self._tools.call_end(handle, {"status": "unclosed"})
+        self._tool_handles.clear()
+
+        self._scope.pop(self._agent_handle, output=output)
+        self._atif_path.write_text(self._atif_exporter.export_json())
+        self._atif_exporter.deregister(self._atif_subscriber)
+        self._atof_exporter.deregister(self._atof_subscriber)
+        self._atof_exporter.force_flush()
+        self._atof_exporter.shutdown()
+        self._subscribers.deregister(self._atof_subscriber)
+        self._subscribers.deregister(self._atif_subscriber)
+
+        return {
+            "nemo_relay_output_dir": str(self.relay_dir),
+            "nemo_relay_atof_path": str(self.atof_path) if self.atof_path.exists() else "",
+            "nemo_relay_atif_path": str(self._atif_path) if self._atif_path.exists() else "",
+            "nemo_relay_atif_paths": json.dumps([str(self._atif_path)] if self._atif_path.exists() else []),
+        }
+
+
 # if ray close sys.stderr mid-request, write to the original fd
 class _SafeStderrHandler(logging.Handler):
     def emit(self, record):
@@ -165,6 +316,7 @@ class HermesAgentConfig(BaseResponsesAPIAgentConfig):
     container_formatter: Optional[str] = None
     apptainer_command: str = "apptainer"
     setup_timeout: int = 900
+    nemo_relay: HermesNemoRelayConfig = Field(default_factory=HermesNemoRelayConfig)
     verify_swebench: bool = False
     swebench_setup_dir: Optional[str] = None
     swebench_results_root: str = "outputs/hermes_agent/swebench-verifier"
@@ -202,6 +354,30 @@ class HermesAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
         )
         base = self.server_client._build_server_base_url(model_server_cfg)
         return f"{base}/v1"
+
+    def _resolve_nemo_relay_output_dir(self, work_dir: Optional[str]) -> Optional[Path]:
+        if not self.config.nemo_relay.enabled:
+            return None
+
+        if work_dir:
+            run_name = Path(work_dir).parent.name
+        else:
+            run_name = f"hermes_{uuid4().hex[:8]}"
+
+        if self.config.nemo_relay.output_dir:
+            output_root = Path(self.config.nemo_relay.output_dir).expanduser()
+            if not output_root.is_absolute():
+                output_root = Path.cwd() / output_root
+            relay_dir = output_root / run_name
+        elif work_dir:
+            relay_dir = Path(work_dir).parent / "nemo-relay"
+        else:
+            relay_dir = Path(self.config.workspace_root).expanduser() / "nemo-relay" / run_name
+            if not relay_dir.is_absolute():
+                relay_dir = Path.cwd() / relay_dir
+
+        relay_dir.mkdir(parents=True, exist_ok=True)
+        return relay_dir
 
     async def responses(
         self,
@@ -251,6 +427,19 @@ class HermesAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
 
         metadata = getattr(body, "metadata", None) or {}
         work_dir = await self._materialize_swebench_workspace(metadata)
+        relay_dir = self._resolve_nemo_relay_output_dir(work_dir)
+        relay_capture: Optional[_HermesNemoRelayCapture] = None
+        if relay_dir:
+            relay_capture = _HermesNemoRelayCapture(
+                relay_dir=relay_dir,
+                config=self.config.nemo_relay,
+                model_name=model_name,
+                input_text=user_message,
+                metadata=dict(metadata),
+            )
+            agent.step_callback = relay_capture.step
+            agent.tool_start_callback = relay_capture.tool_start
+            agent.tool_complete_callback = relay_capture.tool_complete
 
         old_terminal_cwd = os.environ.get("TERMINAL_CWD")
         if work_dir:
@@ -274,6 +463,7 @@ class HermesAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
 
         output_items = _trajectory_to_output_items(messages, n_input)
         patch = await self._collect_patch(work_dir)
+        relay_metadata: dict[str, str] = {}
 
         has_assistant_message = any(
             getattr(item, "type", None) == "message" and getattr(item, "role", None) == "assistant"
@@ -308,6 +498,17 @@ class HermesAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
                 )
             )
 
+        if relay_capture:
+            relay_capture.add_llm_projection(messages[n_input:], model_name)
+            relay_metadata = relay_capture.close(
+                {
+                    "patch_exists": bool(patch.strip()),
+                    "assistant_messages": sum(
+                        1 for item in output_items if getattr(item, "type", None) == "message"
+                    ),
+                }
+            )
+
         return NeMoGymResponse(
             id=f"resp_{uuid4().hex}",
             created_at=int(time()),
@@ -329,7 +530,8 @@ class HermesAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
                 "patch": patch,
                 "patch_exists": str(bool(patch.strip())).lower(),
                 "instance_id": str(metadata.get("instance_id") or ""),
-            },
+            }
+            | relay_metadata,
         )
 
     async def run(self, request: Request, body: HermesAgentRunRequest) -> HermesAgentVerifyResponse:
