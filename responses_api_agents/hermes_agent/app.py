@@ -47,6 +47,7 @@ from nemo_gym.openai_utils import (
     NeMoGymResponseUsage,
 )
 from nemo_gym.server_utils import get_response_json, raise_for_status
+from responses_api_agents.opencode_agent.app import OpenCodeAgent as _SWEBenchHelpers
 
 
 def _trajectory_to_output_items(messages, n_input):
@@ -149,7 +150,7 @@ def _split_input_to_user_and_history(input_items) -> tuple[str, list[dict], Opti
 
 
 class HermesAgentConfig(BaseResponsesAPIAgentConfig):
-    resources_server: ResourcesServerRef
+    resources_server: Optional[ResourcesServerRef] = None
     model_server: ModelServerRef
     concurrency: int = 32
     max_turns: int = 30
@@ -159,6 +160,16 @@ class HermesAgentConfig(BaseResponsesAPIAgentConfig):
     terminal_backend: str = "local"
     terminal_timeout: int = 60
     system_prompt: Optional[str] = None
+    work_dir: Optional[str] = None
+    workspace_root: str = "outputs/hermes_agent/workspaces"
+    container_formatter: Optional[str] = None
+    apptainer_command: str = "apptainer"
+    setup_timeout: int = 900
+    verify_swebench: bool = False
+    swebench_setup_dir: Optional[str] = None
+    swebench_results_root: str = "outputs/hermes_agent/swebench-verifier"
+    swebench_verifier_timeout: int = 1200
+    swebench_model_name: str = "hermes_agent"
 
 
 class HermesAgentRunRequest(BaseRunRequest):
@@ -171,7 +182,7 @@ class HermesAgentVerifyResponse(BaseVerifyResponse):
     finished_naturally: bool = False
 
 
-class HermesAgent(SimpleResponsesAPIAgent):
+class HermesAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
     config: HermesAgentConfig
     sem: Semaphore = None
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -238,18 +249,31 @@ class HermesAgent(SimpleResponsesAPIAgent):
 
         agent._build_api_kwargs = _patched_build_api_kwargs
 
-        result = await asyncio.to_thread(
-            agent.run_conversation,
-            user_message,
-            system_message,
-            history,
-        )
+        metadata = getattr(body, "metadata", None) or {}
+        work_dir = await self._materialize_swebench_workspace(metadata)
+
+        old_terminal_cwd = os.environ.get("TERMINAL_CWD")
+        if work_dir:
+            os.environ["TERMINAL_CWD"] = work_dir
+        try:
+            result = await asyncio.to_thread(
+                agent.run_conversation,
+                user_message,
+                system_message,
+                history,
+            )
+        finally:
+            if old_terminal_cwd is None:
+                os.environ.pop("TERMINAL_CWD", None)
+            else:
+                os.environ["TERMINAL_CWD"] = old_terminal_cwd
 
         messages = result.get("messages") or []
         # aiagent omits system from returned messages
         n_input = len(history) + 1
 
         output_items = _trajectory_to_output_items(messages, n_input)
+        patch = await self._collect_patch(work_dir)
 
         has_assistant_message = any(
             getattr(item, "type", None) == "message" and getattr(item, "role", None) == "assistant"
@@ -300,20 +324,27 @@ class HermesAgent(SimpleResponsesAPIAgent):
                 output_tokens_details=NeMoGymResponseOutputTokensDetails(reasoning_tokens=0),
                 total_tokens=0,
             ),
+            metadata={
+                "work_dir": work_dir or "",
+                "patch": patch,
+                "patch_exists": str(bool(patch.strip())).lower(),
+                "instance_id": str(metadata.get("instance_id") or ""),
+            },
         )
 
     async def run(self, request: Request, body: HermesAgentRunRequest) -> HermesAgentVerifyResponse:
         async with self.sem:
             cookies = request.cookies
 
-            seed_resp = await self.server_client.post(
-                server_name=self.config.resources_server.name,
-                url_path="/seed_session",
-                json=body.model_dump(),
-                cookies=cookies,
-            )
-            await raise_for_status(seed_resp)
-            cookies = seed_resp.cookies
+            if self.config.resources_server:
+                seed_resp = await self.server_client.post(
+                    server_name=self.config.resources_server.name,
+                    url_path="/seed_session",
+                    json=body.model_dump(),
+                    cookies=cookies,
+                )
+                await raise_for_status(seed_resp)
+                cookies = seed_resp.cookies
 
             agent_resp = await self.server_client.post(
                 server_name=self.config.name,
@@ -325,15 +356,6 @@ class HermesAgent(SimpleResponsesAPIAgent):
             cookies = agent_resp.cookies
             agent_resp_json = await get_response_json(agent_resp)
 
-            verify_resp = await self.server_client.post(
-                server_name=self.config.resources_server.name,
-                url_path="/verify",
-                json=body.model_dump() | {"response": agent_resp_json},
-                cookies=cookies,
-            )
-            await raise_for_status(verify_resp)
-            verify_json = await get_response_json(verify_resp)
-
             gym_resp = NeMoGymResponse.model_validate(agent_resp_json)
             turns = sum(
                 1
@@ -342,6 +364,43 @@ class HermesAgent(SimpleResponsesAPIAgent):
             )
             last = gym_resp.output[-1] if gym_resp.output else None
             naturally = getattr(last, "type", None) == "message" and getattr(last, "role", None) == "assistant"
+
+            if not self.config.resources_server:
+                reward = 0.0
+                verify_fields: dict[str, Any] = {}
+                metadata = body.responses_create_params.metadata or {}
+                response_metadata = gym_resp.metadata or {}
+                if self.config.verify_swebench:
+                    try:
+                        verify_fields = await self._verify_swebench_patch(
+                            dict(metadata),
+                            str(response_metadata.get("patch") or ""),
+                        )
+                        reward = 1.0 if verify_fields.get("swebench_resolved") else 0.0
+                    except Exception as exc:
+                        LOG.exception("SWE-bench verification failed")
+                        verify_fields = {
+                            "swebench_resolved": False,
+                            "swebench_error": str(exc),
+                        }
+
+                return HermesAgentVerifyResponse(
+                    responses_create_params=body.responses_create_params,
+                    response=gym_resp,
+                    reward=reward,
+                    turns_used=turns,
+                    finished_naturally=naturally,
+                    **verify_fields,
+                )
+
+            verify_resp = await self.server_client.post(
+                server_name=self.config.resources_server.name,
+                url_path="/verify",
+                json=body.model_dump() | {"response": agent_resp_json},
+                cookies=cookies,
+            )
+            await raise_for_status(verify_resp)
+            verify_json = await get_response_json(verify_resp)
 
             return HermesAgentVerifyResponse.model_validate(
                 verify_json | {"turns_used": turns, "finished_naturally": naturally}

@@ -15,3 +15,18 @@ hermes_agent:
       terminal_backend: local
       terminal_timeout: 60
       system_prompt: null
+      work_dir: null
+      workspace_root: outputs/hermes_agent/workspaces
+      container_formatter: null
+      apptainer_command: apptainer
+      setup_timeout: 900
+      verify_swebench: false
+      swebench_setup_dir: null
+      swebench_results_root: outputs/hermes_agent/swebench-verifier
+      swebench_verifier_timeout: 1200
+      swebench_model_name: hermes_agent
+      datasets:
+        - name: django_13741_smoke
+          type: example
+          jsonl_fpath: responses_api_agents/hermes_agent/data/django_13741_smoke.jsonl
+          license: Apache 2.0

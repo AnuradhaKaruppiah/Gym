@@ -34,6 +34,17 @@ def test_config_yaml_parses():
     assert inner["system_prompt"] is None
     assert inner["terminal_backend"] == "local"
     assert inner["terminal_timeout"] == 60
+    assert inner["work_dir"] is None
+    assert inner["workspace_root"] == "outputs/hermes_agent/workspaces"
+    assert inner["container_formatter"] is None
+    assert inner["apptainer_command"] == "apptainer"
+    assert inner["setup_timeout"] == 900
+    assert inner["verify_swebench"] is False
+    assert inner["swebench_setup_dir"] is None
+    assert inner["swebench_results_root"] == "outputs/hermes_agent/swebench-verifier"
+    assert inner["swebench_verifier_timeout"] == 1200
+    assert inner["swebench_model_name"] == "hermes_agent"
+    assert inner["datasets"][0]["jsonl_fpath"] == "responses_api_agents/hermes_agent/data/django_13741_smoke.jsonl"
     assert "disabled_toolsets" not in inner
 
 
