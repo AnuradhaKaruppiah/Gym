@@ -52,6 +52,31 @@ Install Apptainer separately if it is not already available:
 apptainer --version
 ```
 
+## Set Up NeMoFlow
+
+Hermes uses the NeMoFlow Python package. For this POC, the Relay-enabled run
+points at a local NeMoRelay checkout so Gym does not need a hard dependency on
+NeMoFlow:
+
+```bash
+export NEMO_RELAY_PYTHON_PATH=/path/to/NeMo-Relay/python
+test -f "${NEMO_RELAY_PYTHON_PATH}/nemo_flow/__init__.py"
+```
+
+The Relay-enabled command passes this path as `nemo_relay.python_path`; the
+Hermes adapter adds it to `sys.path` before importing `nemo_flow`.
+
+If you want to use the published Python package instead, install it into the Gym
+virtual environment and omit the `nemo_relay.python_path` override:
+
+```bash
+cd "${GYM_SOURCE_DIR}"
+source .venv/bin/activate
+
+uv pip install nemo-flow
+python -c "import nemo_flow; print(nemo_flow.__file__)"
+```
+
 ## Configure Paths
 
 The commands need a Gym checkout, an output directory, model credentials, the SWE-bench image directory, and the NeMoRelay Python package path for the Relay run.

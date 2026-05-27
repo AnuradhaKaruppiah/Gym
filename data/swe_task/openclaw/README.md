@@ -57,6 +57,33 @@ Install Apptainer separately if it is not already available:
 apptainer --version
 ```
 
+## Set Up NeMoFlow
+
+OpenClaw uses the NeMoFlow OpenClaw plugin, not the Python package. For this
+POC, point at the plugin from a local NeMoRelay checkout:
+
+```bash
+export NEMO_RELAY_OPENCLAW_PLUGIN_PATH=/path/to/NeMo-Relay/integrations/openclaw
+test -f "${NEMO_RELAY_OPENCLAW_PLUGIN_PATH}/package.json"
+```
+
+If the local checkout has not been built yet, build the plugin once from the
+NeMoRelay repository root:
+
+```bash
+npm ci --ignore-scripts
+npm run build --workspace=nemo-flow-openclaw
+test -f integrations/openclaw/dist/index.js
+```
+
+The Relay-enabled command passes the plugin path as
+`nemo_flow.plugin_local_path`; the OpenClaw adapter adds it to OpenClaw's plugin
+load paths and enables ATIF output under the run artifact directory.
+
+The adapter also has a `nemo_flow.plugin_package` setting for package-based
+installs (`npm:nemo-flow-openclaw@0.3.0`), but this POC uses the local plugin
+path so PR changes can be tested before a package publish.
+
 ## Configure Paths
 
 The commands need a Gym checkout, an output directory, model credentials, the SWE-bench image directory, and the NeMoRelay OpenClaw plugin path for the Relay run.
