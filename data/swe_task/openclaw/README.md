@@ -49,6 +49,18 @@ Expected SWE-bench image:
 ls "${SWEBENCH_IMAGE_DIR}/swebench_sweb.eval.x86_64.django_1776_django-13741.sif"
 ```
 
+If that file does not exist, download it with Apptainer:
+
+```bash
+mkdir -p "${SWEBENCH_IMAGE_DIR}" "${GYM_OUTPUT_DIR}/apptainer-cache" "${GYM_OUTPUT_DIR}/apptainer-tmp"
+
+APPTAINER_CACHEDIR="${GYM_OUTPUT_DIR}/apptainer-cache" \
+APPTAINER_TMPDIR="${GYM_OUTPUT_DIR}/apptainer-tmp" \
+apptainer pull \
+  "${SWEBENCH_IMAGE_DIR}/swebench_sweb.eval.x86_64.django_1776_django-13741.sif" \
+  docker://swebench/sweb.eval.x86_64.django_1776_django-13741:latest
+```
+
 If `NVIDIA_BASE_URL` and `NVIDIA_API_KEY` are already exported in your shell, you can skip the `source "${NVIDIA_ENV_FILE}"` lines below.
 
 ## Run Baseline Gym/OpenClaw
