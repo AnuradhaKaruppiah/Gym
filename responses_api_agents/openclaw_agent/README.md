@@ -10,8 +10,8 @@ session JSONL, then returns Gym-compatible response metadata.
 
 ## POC Notes
 
-- The first proof-of-life should keep `nemo_flow.enabled=false` and focus on
-  proving OpenClaw can solve the same one-row Django SWE-bench task through Gym.
+- The first proof-of-life kept `nemo_flow.enabled=false` and proved OpenClaw can
+  solve the same one-row Django SWE-bench task through Gym.
 - OpenClaw requires Node 22+. If `node_bin_dir` is unset, the adapter
   opportunistically prepends the newest local `~/.nvm/versions/node/v22*/bin`.
 - For the NVIDIA OpenAI-compatible endpoint, the OpenClaw model selector has the
@@ -25,4 +25,6 @@ session JSONL, then returns Gym-compatible response metadata.
   compute `reward=1.0` only when the SWE-bench report marks the instance
   resolved.
 - `nemo_flow.enabled=true` configures the OpenClaw native NeMo Flow plugin shape
-  from the Harbor PR, but the baseline should pass before enabling it.
+  from the Harbor PR. Set `nemo_flow.plugin_local_path` to a local
+  `nemo-flow-openclaw` checkout to load the NeMo Relay plugin through OpenClaw
+  `plugins.load.paths`; the POC verified direct ATIF export with this path.

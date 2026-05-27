@@ -118,6 +118,15 @@ class TestOpenClawConfig:
         assert component["config"]["atif"]["agent_name"] == "openclaw"
         assert component["config"]["atif"]["output_directory"] == str(tmp_path / "nemo-flow-atif")
 
+    def test_build_config_adds_nemo_flow_local_plugin_path(self, tmp_path: Path) -> None:
+        plugin_root = tmp_path / "nemo-flow-openclaw"
+        plugin_root.mkdir()
+        agent = _make_agent(nemo_flow={"enabled": True, "plugin_local_path": str(plugin_root)})
+
+        cfg = agent._build_openclaw_config(tmp_path)
+
+        assert cfg["plugins"]["load"]["paths"] == [str(plugin_root.resolve())]
+
     def test_config_yaml_parses(self) -> None:
         cfg_path = Path(__file__).resolve().parent.parent / "configs" / "openclaw_agent.yaml"
         data = yaml.safe_load(cfg_path.read_text())
@@ -127,7 +136,8 @@ class TestOpenClawConfig:
         assert inner["model"] == "nvidia/nvidia/qwen/qwen-235b"
         assert inner["node_bin_dir"] is None
         assert inner["nemo_flow"]["enabled"] is False
-        assert inner["nemo_flow"]["plugin_package"] == "npm:nemo-flow-openclaw@0.2.0-rc.3"
+        assert inner["nemo_flow"]["plugin_package"] == "npm:nemo-flow-openclaw@0.3.0"
+        assert inner["nemo_flow"]["plugin_local_path"] is None
         assert inner["datasets"][0]["jsonl_fpath"] == (
             "responses_api_agents/openclaw_agent/data/django_13741_smoke.jsonl"
         )

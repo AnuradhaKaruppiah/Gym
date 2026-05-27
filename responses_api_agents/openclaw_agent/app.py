@@ -141,6 +141,7 @@ class OpenClawNemoFlowConfig(BaseModel):
     enabled: bool = False
     plugin_manifest_id: str = _NEMO_FLOW_PLUGIN_MANIFEST_ID
     plugin_package: str = f"npm:nemo-flow-openclaw@{_NEMO_FLOW_OPENCLAW_NPM_VERSION}"
+    plugin_local_path: Optional[str] = None
     output_dir: Optional[str] = None
 
 
@@ -252,6 +253,15 @@ class OpenClawAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
         pid = self.config.nemo_flow.plugin_manifest_id
         plugins = cfg.setdefault("plugins", {})
         plugins.setdefault("bundledDiscovery", "compat")
+        if self.config.nemo_flow.plugin_local_path:
+            load = plugins.setdefault("load", {})
+            paths = load.get("paths")
+            if not isinstance(paths, list):
+                paths = []
+            plugin_path = str(Path(self.config.nemo_flow.plugin_local_path).expanduser().resolve())
+            if plugin_path not in paths:
+                paths.append(plugin_path)
+            load["paths"] = paths
         allow = plugins.get("allow")
         if isinstance(allow, list):
             if pid not in allow:
@@ -426,7 +436,12 @@ class OpenClawAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
             "openclaw_setup_stderr_path": str(artifact_root / "openclaw.setup.stderr.txt"),
         }
         if self.config.nemo_flow.enabled:
-            metadata["nemo_flow_output_dir"] = str(artifact_root / "nemo-flow-atif")
+            nemo_flow_output_dir = artifact_root / "nemo-flow-atif"
+            metadata["nemo_flow_output_dir"] = str(nemo_flow_output_dir)
+            atif_paths = sorted(str(path) for path in nemo_flow_output_dir.glob("*.json"))
+            if atif_paths:
+                metadata["nemo_flow_atif_path"] = atif_paths[0]
+                metadata["nemo_flow_atif_paths"] = json.dumps(atif_paths)
 
         envelope = _decode_last_json_dict_suffix(stdout)
         agent_meta = (envelope.get("meta") or {}).get("agentMeta") if envelope else {}
