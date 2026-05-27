@@ -32,14 +32,14 @@ Hermes is a useful third comparison point: the baseline Gym response already has
 
 ## Configure Paths
 
-The commands need a Gym checkout, an output directory, model credentials, the SWE-bench image directory, and a NeMoRelay checkout for the Relay run.
+The commands need a Gym checkout, an output directory, model credentials, the SWE-bench image directory, and the NeMoRelay Python package path for the Relay run.
 
 ```bash
 export GYM_SOURCE_DIR=/path/to/Gym
 export GYM_OUTPUT_DIR=/path/to/gym-output
 export SWEBENCH_IMAGE_DIR="${GYM_OUTPUT_DIR}/images"
 export NVIDIA_ENV_FILE=/path/to/nvidia.env
-export NEMO_RELAY_DIR=/path/to/NeMo-Relay
+export NEMO_RELAY_PYTHON_PATH=/path/to/NeMo-Relay/python
 ```
 
 Expected SWE-bench image:
@@ -131,7 +131,7 @@ set +a
   "+hermes_agent.responses_api_agents.hermes_agent.swebench_results_root=${GYM_OUTPUT_DIR}/hermes-relay-swebench-verifier" \
   +hermes_agent.responses_api_agents.hermes_agent.temperature=0.2 \
   +hermes_agent.responses_api_agents.hermes_agent.nemo_relay.enabled=true \
-  "+hermes_agent.responses_api_agents.hermes_agent.nemo_relay.python_path=${NEMO_RELAY_DIR}/python" \
+  "+hermes_agent.responses_api_agents.hermes_agent.nemo_relay.python_path=${NEMO_RELAY_PYTHON_PATH}" \
   "+hermes_agent.responses_api_agents.hermes_agent.nemo_relay.output_dir=${GYM_OUTPUT_DIR}/hermes-nemo-relay"
 ```
 

@@ -33,14 +33,14 @@ OpenClaw is a useful comparison point because the baseline already emits a compa
 
 ## Configure Paths
 
-The commands need a Gym checkout, an output directory, model credentials, the SWE-bench image directory, and a NeMoRelay checkout for the Relay run.
+The commands need a Gym checkout, an output directory, model credentials, the SWE-bench image directory, and the NeMoRelay OpenClaw plugin path for the Relay run.
 
 ```bash
 export GYM_SOURCE_DIR=/path/to/Gym
 export GYM_OUTPUT_DIR=/path/to/gym-output
 export SWEBENCH_IMAGE_DIR="${GYM_OUTPUT_DIR}/images"
 export NVIDIA_ENV_FILE=/path/to/nvidia.env
-export NEMO_RELAY_DIR=/path/to/NeMo-Relay
+export NEMO_RELAY_OPENCLAW_PLUGIN_PATH=/path/to/NeMo-Relay/integrations/openclaw
 ```
 
 Expected SWE-bench image:
@@ -134,7 +134,7 @@ set +a
   +openclaw_agent.responses_api_agents.openclaw_agent.verify_swebench=true \
   "+openclaw_agent.responses_api_agents.openclaw_agent.swebench_results_root=${GYM_OUTPUT_DIR}/openclaw-relay-swebench-verifier" \
   +openclaw_agent.responses_api_agents.openclaw_agent.nemo_flow.enabled=true \
-  "+openclaw_agent.responses_api_agents.openclaw_agent.nemo_flow.plugin_local_path=${NEMO_RELAY_DIR}/integrations/openclaw"
+  "+openclaw_agent.responses_api_agents.openclaw_agent.nemo_flow.plugin_local_path=${NEMO_RELAY_OPENCLAW_PLUGIN_PATH}"
 ```
 
 Terminal 2:
