@@ -1,0 +1,21 @@
+{
+  "task": "django__django-13741",
+  "agent": "opencode",
+  "without_relay": {
+    "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/opencode_django_13741_verified_rollout.jsonl",
+    "atif_path": "/home/anuradhak/projects/nat/.tmp/nemo-gym/atif-comparison/django__django-13741-opencode/without-relay.gym-reconstructed.atif.json",
+    "step_count": 32,
+    "reward": 1.0,
+    "swebench_resolved": true,
+    "note": "Post-hoc ATIF reconstructed from Gym response output; baseline path uses Gym output without Relay event capture."
+  },
+  "with_relay": {
+    "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/opencode_django_13741_relay_rollout.jsonl",
+    "atif_path": "/home/anuradhak/projects/nat/.tmp/nemo-gym/atif-comparison/django__django-13741-opencode/with-relay.nemo-relay.atif.json",
+    "atof_path": "/home/anuradhak/projects/nat/.tmp/nemo-gym/atif-comparison/django__django-13741-opencode/with-relay.nemo-relay.atof.jsonl",
+    "step_count": 44,
+    "reward": 1.0,
+    "swebench_resolved": true,
+    "note": "Native NeMoRelay capture from OpenCode plugin with ATOF events and ATIF projection."
+  }
+}
