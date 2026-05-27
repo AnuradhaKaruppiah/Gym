@@ -1,0 +1,46 @@
+openclaw_agent:
+  responses_api_agents:
+    openclaw_agent:
+      entrypoint: app.py
+      resources_server: null
+      concurrency: 4
+      command: openclaw
+      model: nvidia/nvidia/qwen/qwen-235b
+      node_bin_dir: null
+      nvidia_api_key: ${nvidia_api_key}
+      nvidia_base_url: ${nvidia_base_url}
+      openai_api_key: ${openai_api_key}
+      openai_base_url: ${openai_base_url}
+      work_dir: null
+      workspace_root: outputs/openclaw_agent/workspaces
+      container_formatter: null
+      apptainer_command: apptainer
+      setup_timeout: 900
+      timeout: 900
+      openclaw_agent_id: main
+      thinking: "off"
+      system_prompt: null
+      extra_args: []
+      nemo_flow:
+        enabled: false
+        plugin_manifest_id: nemo-flow
+        plugin_package: npm:nemo-flow-openclaw@0.2.0-rc.3
+        output_dir: null
+      verify_swebench: false
+      swebench_setup_dir: null
+      swebench_results_root: outputs/openclaw_agent/swebench-verifier
+      swebench_verifier_timeout: 1200
+      swebench_model_name: openclaw_agent
+      openclaw_config:
+        models:
+          providers:
+            nvidia:
+              baseUrl: "{env:NVIDIA_BASE_URL}"
+              models:
+                - id: nvidia/qwen/qwen-235b
+                  name: nvidia/qwen/qwen-235b
+      datasets:
+        - name: django_13741_smoke
+          type: example
+          jsonl_fpath: responses_api_agents/openclaw_agent/data/django_13741_smoke.jsonl
+          license: Apache 2.0
