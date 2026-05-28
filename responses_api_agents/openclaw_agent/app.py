@@ -310,8 +310,8 @@ class OpenClawAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
                 "capture": {
                     "includePrompts": True,
                     "includeResponses": True,
-                    "stripToolArgs": True,
-                    "stripToolResults": True,
+                    "stripToolArgs": False,
+                    "stripToolResults": False,
                 },
             },
         }

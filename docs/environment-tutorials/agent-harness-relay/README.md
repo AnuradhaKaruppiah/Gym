@@ -1,26 +1,40 @@
-# Agent Harness Relay Artifacts
+# NeMoRelay Artifacts For Agent Harnesses
 
-This directory holds one-task SWE-bench artifacts for comparing Gym rollout output with optional NeMoRelay capture.
+This POC shows how Gym can optionally enable a NeMoFlow/NeMoRelay plugin inside
+an agent harness and get richer, unified trajectory artifacts without making the
+harness output format the integration contract.
 
-## Quick Orientation
+The Relay artifacts are the primary files:
 
-This POC asks a narrow question: what extra trajectory data do we get when an agent harness runs under Gym with NeMoRelay capture enabled? The main value is that different agent harnesses can emit a shared telemetry shape, making trajectories easier to compare, validate, visualize, and feed into downstream eval tooling.
+- `with-relay.nemo-relay.atof.jsonl`: lossless ATOF event stream from the run.
+- `with-relay.nemo-relay.atif.json`: ATIF trajectory projected from Relay events.
 
-| Concept | What it means here | Deeper reference |
+Baseline files are included as secondary context for debugging and migration:
+
+- `without-relay.gym-reconstructed.atif.json`: best-effort ATIF reconstructed
+  from Gym rollout output.
+- Harness-native logs, when available, such as OpenClaw session JSONL.
+
+## POC Shape
+
+All harnesses run the same SWE-bench Verified task, `django__django-13741`, and
+leave a resolved workspace patch. The goal is to show that Relay can provide a
+consistent observability layer across them.
+
+| Harness | Relay integration | Primary artifact bundle |
 |---|---|---|
-| ATIF | Agent Trajectory Interchange Format. This is the normalized trajectory JSON used for downstream viewers, validators, and eval tooling. | [Harbor trajectory schema models](https://github.com/harbor-framework/harbor/tree/main/src/harbor/models/trajectories) |
-| ATOF | Agent Trajectory Observability Format. This is the lossless lower-level event stream emitted during execution; it can be used for replay and projected into ATIF. | [ATOF event format](https://github.com/NVIDIA/NeMo-Agent-Toolkit/blob/develop/packages/nvidia_nat_atif/atof-event-format.md) |
-| NeMoRelay | Optional runtime/observability layer used here to capture agent-harness events without making Gym depend on Relay directly. | [GitHub repo](https://github.com/NVIDIA/NeMo-Relay), [Fern docs](https://nvidia-nemo-relay.docs.buildwithfern.com/nemo/relay/observability-plugin/about) |
+| Hermes | Python adapter-level NeMoRelay capture around Hermes callbacks | [hermes/](hermes/) |
+| OpenClaw | Optional NeMoFlow plugin loaded by the OpenClaw harness | [openclaw/](openclaw/) |
+| OpenCode | Optional NeMoFlow plugin inside the OpenCode runtime | [opencode/](opencode/) |
 
-In this directory, each harness has a baseline artifact reconstructed from Gym output and, where available, Relay-generated ATOF/ATIF artifacts from the same `django__django-13741` SWE-bench task.
+ATOF is the source trace to use when losslessness matters. ATIF is the normalized
+trajectory to feed into viewers, validators, and eval tooling. To inspect ATIF
+visually, see [Viewing ATIF In Phoenix](phoenix.atif.md).
 
-To inspect an ATIF trajectory visually, see [Viewing ATIF In Phoenix](phoenix.atif.md).
+## Layout
 
-## Harness Bundles
+Each harness directory keeps the readable overview in `README.md`, the run
+commands in `RUNBOOK.md`, and generated payloads in `artifacts/`.
 
-- `hermes/`: runbook, regeneration script, and artifacts for Hermes on `django__django-13741`.
-- `hermes-offrails/`: preserved unconstrained Hermes trace showing why trajectory evaluation matters.
-- `openclaw/`: runbook, regeneration script, and artifacts for OpenClaw on `django__django-13741`.
-- `opencode/`: captured artifacts for OpenCode on `django__django-13741`.
-
-Each harness stores generated JSON/JSONL payloads under its `artifacts/` directory so the docs remain readable while the data stays easy to copy into Phoenix or other ATIF consumers.
+`hermes-offrails/` is a preserved off-rails trace that demonstrates why richer
+trajectory capture is useful, but it is not one of the three main POC harnesses.

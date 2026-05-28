@@ -119,6 +119,8 @@ class TestOpenClawConfig:
         assert component["config"]["atof"]["output_directory"] == str(tmp_path / "nemo-relay-atof")
         assert component["config"]["atif"]["agent_name"] == "openclaw"
         assert component["config"]["atif"]["output_directory"] == str(tmp_path / "nemo-relay-atif")
+        assert entry["config"]["capture"]["stripToolArgs"] is False
+        assert entry["config"]["capture"]["stripToolResults"] is False
 
     def test_build_config_adds_nemo_flow_local_plugin_path(self, tmp_path: Path) -> None:
         plugin_root = tmp_path / "nemo-relay-openclaw"
