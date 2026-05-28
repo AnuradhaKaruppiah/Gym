@@ -10,10 +10,18 @@
     "note": "Post-hoc ATIF reconstructed from Gym response output; baseline path uses Gym output without Relay event capture."
   },
   "with_relay": {
-    "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/opencode_django_13741_relay_rollout.jsonl",
+    "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/opencode_django_13741_rerun4_20260528_rollout.jsonl",
     "atif_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/opencode/artifacts/with-relay.nemo-relay.atif.json",
+    "subagent_atif_paths": [
+      "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/opencode/artifacts/with-relay.nemo-relay.explore.atif.json"
+    ],
     "atof_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/opencode/artifacts/with-relay.nemo-relay.atof.jsonl",
-    "step_count": 44,
+    "schema_version": "ATIF-v1.7",
+    "step_count": 4773,
+    "subagent_step_counts": {
+      "explore": 931
+    },
+    "atof_event_count": 5763,
     "reward": 1.0,
     "swebench_resolved": true,
     "note": "Native NeMoRelay capture from OpenCode plugin with ATOF events and ATIF projection."
