@@ -41,6 +41,16 @@ def _latest_file(root: Path, pattern: str) -> Path:
     return max(matches, key=lambda path: path.stat().st_mtime)
 
 
+def _latest_file_any(root: Path, patterns: list[str]) -> Path:
+    errors: list[str] = []
+    for pattern in patterns:
+        try:
+            return _latest_file(root, pattern)
+        except FileNotFoundError as exc:
+            errors.append(str(exc))
+    raise FileNotFoundError("; ".join(errors))
+
+
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     with path.open() as stream:
         return [json.loads(line) for line in stream if line.strip()]
@@ -69,6 +79,20 @@ def _session_summary(path: Path) -> dict[str, Any]:
         "total_events": len(events),
         "event_types": dict(sorted(Counter(event.get("type", "unknown") for event in events).items())),
     }
+
+
+def _metadata_path(rollout: dict[str, Any], *keys: str) -> Path | None:
+    metadata = rollout.get("response", {}).get("metadata", {})
+    if not isinstance(metadata, dict):
+        return None
+    for key in keys:
+        value = metadata.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        path = Path(value)
+        if path.exists():
+            return path
+    return None
 
 
 def _build_no_relay_atif(
@@ -176,21 +200,28 @@ def regenerate(
 
     no_relay_rollout_path = no_relay_rollout_path or tmp_root / "openclaw_django_13741_rollout.jsonl"
     relay_rollout_path = relay_rollout_path or tmp_root / "openclaw_django_13741_relay_rollout.jsonl"
-    no_relay_session_path = _latest_file(
+    no_relay = _read_jsonl_one(no_relay_rollout_path)
+    relay = _read_jsonl_one(relay_rollout_path)
+
+    no_relay_session_path = _metadata_path(no_relay, "openclaw_session_jsonl_path") or _latest_file(
         tmp_root / "openclaw-workspaces",
         "django__django-13741_*/openclaw-artifacts/openclaw.session.jsonl",
     )
-    relay_session_path = _latest_file(
-        tmp_root / "openclaw-relay-workspaces",
-        "django__django-13741_*/openclaw-artifacts/openclaw.session.jsonl",
+    relay_session_path = _metadata_path(relay, "openclaw_session_jsonl_path") or _latest_file_any(
+        tmp_root,
+        [
+            "openclaw-relay*-workspaces/django__django-13741_*/openclaw-artifacts/openclaw.session.jsonl",
+            "openclaw-relay-workspaces/django__django-13741_*/openclaw-artifacts/openclaw.session.jsonl",
+        ],
     )
-    relay_atif_path = _latest_file(
-        tmp_root / "openclaw-relay-workspaces",
-        "django__django-13741_*/openclaw-artifacts/nemo-flow-atif/*.json",
+    relay_atif_path = _metadata_path(relay, "nemo_relay_atif_path", "nemo_flow_atif_path") or _latest_file_any(
+        tmp_root,
+        [
+            "openclaw-relay*-workspaces/django__django-13741_*/openclaw-artifacts/nemo-relay-atif/*.json",
+            "openclaw-relay*-workspaces/django__django-13741_*/openclaw-artifacts/nemo-flow-atif/*.json",
+        ],
     )
 
-    no_relay = _read_jsonl_one(no_relay_rollout_path)
-    relay = _read_jsonl_one(relay_rollout_path)
     no_relay_patch_path = Path(no_relay["swebench_output_dir"]) / "patch.diff"
     relay_patch_path = Path(relay["swebench_output_dir"]) / "patch.diff"
     relay_atif = json.loads(relay_atif_path.read_text())
@@ -242,7 +273,7 @@ def regenerate(
             "patch_path": str(relay_patch_path),
             "note": "NeMoRelay plugin emitted normalized ATIF from OpenClaw events. OpenClaw session JSONL is included as the raw harness log.",
         },
-        "comparison_note": "OpenClaw appears more hook-friendly than OpenCode for this POC: both baseline and Relay runs have a compact native session JSONL with message/tool events, and Relay converts the enabled run into a 20-step ATIF trajectory.",
+        "comparison_note": "OpenClaw appears hook-friendly for this POC: both baseline and Relay runs have a compact native session JSONL with message/tool events, and Relay converts the enabled run into a normalized ATIF trajectory.",
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary

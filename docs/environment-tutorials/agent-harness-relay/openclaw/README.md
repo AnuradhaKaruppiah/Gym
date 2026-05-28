@@ -18,14 +18,14 @@ Both runs resolved `django__django-13741` with `reward=1.0`.
 Baseline Gym/OpenClaw:
 
 - 3 reconstructed ATIF steps
-- 16 native OpenClaw session events
+- 14 native OpenClaw session events
 - Native event types: custom, message, model_change, session, thinking_level_change
 - 1 turn used by the OpenClaw agent
 
 Relay-enabled Gym/OpenClaw:
 
-- 20 ATIF steps
-- ATIF source split: 6 agent, 6 user, 8 system
+- 19 ATIF steps
+- ATIF source split: 6 agent, 6 user, 7 system
 - 16 native OpenClaw session events
 - 1 turn used by the OpenClaw agent
 
@@ -33,7 +33,7 @@ OpenClaw is a useful comparison point because the baseline already emits a compa
 
 ## Set Up Gym Environment
 
-Start from a Gym checkout with Python 3.12+, `uv`, and Node/npm available. Node is needed because the OpenClaw run below launches `npx -y openclaw@2026.5.22`.
+Start from a Gym checkout with Python 3.12+, `uv`, and Node/npm available. Node is needed because the OpenClaw run below launches OpenClaw.
 
 ```bash
 export GYM_SOURCE_DIR=/path/to/Gym
@@ -72,7 +72,7 @@ NeMoRelay repository root:
 
 ```bash
 npm ci --ignore-scripts
-npm run build --workspace=nemo-flow-openclaw
+npm run build --workspace=nemo-relay-openclaw
 test -f integrations/openclaw/dist/index.js
 ```
 
@@ -81,7 +81,7 @@ The Relay-enabled command passes the plugin path as
 load paths and enables ATIF output under the run artifact directory.
 
 The adapter also has a `nemo_flow.plugin_package` setting for package-based
-installs (`npm:nemo-flow-openclaw@0.3.0`), but this POC uses the local plugin
+installs (`npm:nemo-relay-openclaw@0.3.0`), but this POC uses the local plugin
 path so PR changes can be tested before a package publish.
 
 ## Configure Paths
@@ -135,11 +135,12 @@ set +a
   +openai_api_key=dummy \
   +openai_base_url=null \
   +error_on_almost_servers=false \
-  '+openclaw_agent.responses_api_agents.openclaw_agent.command=npx -y openclaw@2026.5.22' \
+  '+openclaw_agent.responses_api_agents.openclaw_agent.command=npx -y openclaw@2026.5.26' \
   "+openclaw_agent.responses_api_agents.openclaw_agent.container_formatter=${SWEBENCH_IMAGE_DIR}/swebench_sweb.eval.x86_64.\{instance_id\}.sif" \
   "+openclaw_agent.responses_api_agents.openclaw_agent.workspace_root=${GYM_OUTPUT_DIR}/openclaw-workspaces" \
   +openclaw_agent.responses_api_agents.openclaw_agent.verify_swebench=true \
-  "+openclaw_agent.responses_api_agents.openclaw_agent.swebench_results_root=${GYM_OUTPUT_DIR}/openclaw-swebench-verifier"
+  "+openclaw_agent.responses_api_agents.openclaw_agent.swebench_results_root=${GYM_OUTPUT_DIR}/openclaw-swebench-verifier" \
+  '+openclaw_agent.responses_api_agents.openclaw_agent.openclaw_config.tools.deny=[web_search]'
 ```
 
 Terminal 2:
@@ -180,13 +181,14 @@ set +a
   +openai_api_key=dummy \
   +openai_base_url=null \
   +error_on_almost_servers=false \
-  '+openclaw_agent.responses_api_agents.openclaw_agent.command=npx -y openclaw@2026.5.22' \
+  '+openclaw_agent.responses_api_agents.openclaw_agent.command=npx -y openclaw@2026.5.26' \
   "+openclaw_agent.responses_api_agents.openclaw_agent.container_formatter=${SWEBENCH_IMAGE_DIR}/swebench_sweb.eval.x86_64.\{instance_id\}.sif" \
   "+openclaw_agent.responses_api_agents.openclaw_agent.workspace_root=${GYM_OUTPUT_DIR}/openclaw-relay-workspaces" \
   +openclaw_agent.responses_api_agents.openclaw_agent.verify_swebench=true \
   "+openclaw_agent.responses_api_agents.openclaw_agent.swebench_results_root=${GYM_OUTPUT_DIR}/openclaw-relay-swebench-verifier" \
   +openclaw_agent.responses_api_agents.openclaw_agent.nemo_flow.enabled=true \
-  "+openclaw_agent.responses_api_agents.openclaw_agent.nemo_flow.plugin_local_path=${NEMO_RELAY_OPENCLAW_PLUGIN_PATH}"
+  "+openclaw_agent.responses_api_agents.openclaw_agent.nemo_flow.plugin_local_path=${NEMO_RELAY_OPENCLAW_PLUGIN_PATH}" \
+  '+openclaw_agent.responses_api_agents.openclaw_agent.openclaw_config.tools.deny=[web_search]'
 ```
 
 Terminal 2:

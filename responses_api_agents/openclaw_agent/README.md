@@ -24,7 +24,7 @@ session JSONL, then returns Gym-compatible response metadata.
 - `verify_swebench=true` reuses the OpenCode POC's SWE-bench verifier helper to
   compute `reward=1.0` only when the SWE-bench report marks the instance
   resolved.
-- `nemo_flow.enabled=true` configures the OpenClaw native NeMo Flow plugin shape
-  from the Harbor PR. Set `nemo_flow.plugin_local_path` to a local
-  `nemo-flow-openclaw` checkout to load the NeMo Relay plugin through OpenClaw
-  `plugins.load.paths`; the POC verified direct ATIF export with this path.
+- `nemo_flow.enabled=true` configures the OpenClaw native NeMoRelay plugin shape.
+  Set `nemo_flow.plugin_local_path` to a local NeMoRelay OpenClaw plugin
+  checkout to load the plugin through OpenClaw `plugins.load.paths`; the POC
+  verified direct ATIF export with this path.

@@ -23,8 +23,8 @@ openclaw_agent:
       extra_args: []
       nemo_flow:
         enabled: false
-        plugin_manifest_id: nemo-flow
-        plugin_package: npm:nemo-flow-openclaw@0.3.0
+        plugin_manifest_id: nemo-relay
+        plugin_package: npm:nemo-relay-openclaw@0.3.0
         plugin_local_path: null
         output_dir: null
       verify_swebench: false

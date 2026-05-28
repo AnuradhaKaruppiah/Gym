@@ -53,8 +53,9 @@ from responses_api_agents.opencode_agent.app import _extract_instruction
 
 LOG = logging.getLogger(__name__)
 
-_NEMO_FLOW_PLUGIN_MANIFEST_ID = "nemo-flow"
-_NEMO_FLOW_OPENCLAW_NPM_VERSION = "0.2.0-rc.3"
+_NEMO_RELAY_PLUGIN_MANIFEST_ID = "nemo-relay"
+_NEMO_RELAY_OPENCLAW_NPM_VERSION = "0.3.0"
+_NEMO_RELAY_ATIF_DIR_NAME = "nemo-relay-atif"
 
 
 def _decode_last_json_dict_suffix(raw: str) -> dict[str, Any] | None:
@@ -139,8 +140,8 @@ def parse_openclaw_output(stdout: str) -> tuple[list[Any], dict[str, int], dict[
 
 class OpenClawNemoFlowConfig(BaseModel):
     enabled: bool = False
-    plugin_manifest_id: str = _NEMO_FLOW_PLUGIN_MANIFEST_ID
-    plugin_package: str = f"npm:nemo-flow-openclaw@{_NEMO_FLOW_OPENCLAW_NPM_VERSION}"
+    plugin_manifest_id: str = _NEMO_RELAY_PLUGIN_MANIFEST_ID
+    plugin_package: str = f"npm:nemo-relay-openclaw@{_NEMO_RELAY_OPENCLAW_NPM_VERSION}"
     plugin_local_path: Optional[str] = None
     output_dir: Optional[str] = None
 
@@ -288,7 +289,7 @@ class OpenClawAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
                                 "atif": {
                                     "enabled": True,
                                     "agent_name": "openclaw",
-                                    "output_directory": str(output_dir / "nemo-flow-atif"),
+                                    "output_directory": str(output_dir / _NEMO_RELAY_ATIF_DIR_NAME),
                                 },
                                 "opentelemetry": {"enabled": False},
                                 "openinference": {"enabled": False},
@@ -436,10 +437,13 @@ class OpenClawAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
             "openclaw_setup_stderr_path": str(artifact_root / "openclaw.setup.stderr.txt"),
         }
         if self.config.nemo_flow.enabled:
-            nemo_flow_output_dir = artifact_root / "nemo-flow-atif"
+            nemo_flow_output_dir = artifact_root / _NEMO_RELAY_ATIF_DIR_NAME
+            metadata["nemo_relay_output_dir"] = str(nemo_flow_output_dir)
             metadata["nemo_flow_output_dir"] = str(nemo_flow_output_dir)
             atif_paths = sorted(str(path) for path in nemo_flow_output_dir.glob("*.json"))
             if atif_paths:
+                metadata["nemo_relay_atif_path"] = atif_paths[0]
+                metadata["nemo_relay_atif_paths"] = json.dumps(atif_paths)
                 metadata["nemo_flow_atif_path"] = atif_paths[0]
                 metadata["nemo_flow_atif_paths"] = json.dumps(atif_paths)
 
