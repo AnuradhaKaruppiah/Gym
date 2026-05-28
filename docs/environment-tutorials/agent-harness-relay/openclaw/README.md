@@ -6,6 +6,7 @@ This directory compares artifacts for the same SWE-bench Verified task with and 
 
 - `artifacts/without-relay.gym-reconstructed.atif.json`: post-hoc ATIF reconstructed from Gym rollout output.
 - `artifacts/without-relay.openclaw.session.jsonl`: native OpenClaw session log from the baseline run.
+- `artifacts/with-relay.nemo-relay.atof.jsonl`: raw ATOF event stream emitted by NeMoRelay.
 - `artifacts/with-relay.nemo-relay.atif.json`: ATIF emitted from NeMoRelay capture.
 - `artifacts/with-relay.openclaw.session.jsonl`: native OpenClaw session log from the Relay-enabled run.
 - `artifacts/summary.json`: compact comparison metadata.
@@ -24,12 +25,15 @@ Baseline Gym/OpenClaw:
 
 Relay-enabled Gym/OpenClaw:
 
-- 19 ATIF steps
-- ATIF source split: 6 agent, 6 user, 7 system
-- 16 native OpenClaw session events
+- 23 raw ATOF events
+- ATOF category split: 2 agent, 10 llm, 3 mark, 8 tool
+- 16 ATIF steps
+- ATIF source split: 5 agent, 5 user, 6 system
+- 14 native OpenClaw session events
 - 1 turn used by the OpenClaw agent
 
 OpenClaw is a useful comparison point because the baseline already emits a compact native session JSONL, while Relay turns the enabled run into a normalized ATIF trajectory that can be compared across harnesses.
+The checked-in Relay run denies external web tools (`web_search` and `web_fetch`), so the trace stays focused on repository-local tool use. The Relay ATIF is the current projector output and still demonstrates the RELAY-169 semantic projection issue, so the ATOF is included as the lossless source trace for comparison.
 
 ## Set Up Gym Environment
 
@@ -78,7 +82,7 @@ test -f integrations/openclaw/dist/index.js
 
 The Relay-enabled command passes the plugin path as
 `nemo_flow.plugin_local_path`; the OpenClaw adapter adds it to OpenClaw's plugin
-load paths and enables ATIF output under the run artifact directory.
+load paths and enables ATOF and ATIF output under the run artifact directory.
 
 The adapter also has a `nemo_flow.plugin_package` setting for package-based
 installs (`npm:nemo-relay-openclaw@0.3.0`), but this POC uses the local plugin
@@ -140,7 +144,7 @@ set +a
   "+openclaw_agent.responses_api_agents.openclaw_agent.workspace_root=${GYM_OUTPUT_DIR}/openclaw-workspaces" \
   +openclaw_agent.responses_api_agents.openclaw_agent.verify_swebench=true \
   "+openclaw_agent.responses_api_agents.openclaw_agent.swebench_results_root=${GYM_OUTPUT_DIR}/openclaw-swebench-verifier" \
-  '+openclaw_agent.responses_api_agents.openclaw_agent.openclaw_config.tools.deny=[web_search]'
+  '+openclaw_agent.responses_api_agents.openclaw_agent.openclaw_config.tools.deny=[web_search,web_fetch]'
 ```
 
 Terminal 2:
@@ -188,7 +192,7 @@ set +a
   "+openclaw_agent.responses_api_agents.openclaw_agent.swebench_results_root=${GYM_OUTPUT_DIR}/openclaw-relay-swebench-verifier" \
   +openclaw_agent.responses_api_agents.openclaw_agent.nemo_flow.enabled=true \
   "+openclaw_agent.responses_api_agents.openclaw_agent.nemo_flow.plugin_local_path=${NEMO_RELAY_OPENCLAW_PLUGIN_PATH}" \
-  '+openclaw_agent.responses_api_agents.openclaw_agent.openclaw_config.tools.deny=[web_search]'
+  '+openclaw_agent.responses_api_agents.openclaw_agent.openclaw_config.tools.deny=[web_search,web_fetch]'
 ```
 
 Terminal 2:
@@ -223,6 +227,7 @@ The script rewrites:
 
 - `artifacts/without-relay.gym-reconstructed.atif.json`
 - `artifacts/without-relay.openclaw.session.jsonl`
+- `artifacts/with-relay.nemo-relay.atof.jsonl`
 - `artifacts/with-relay.nemo-relay.atif.json`
 - `artifacts/with-relay.openclaw.session.jsonl`
 - `artifacts/summary.json`

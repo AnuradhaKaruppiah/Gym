@@ -115,6 +115,8 @@ class TestOpenClawConfig:
         entry = cfg["plugins"]["entries"]["nemo-relay"]
         component = entry["config"]["plugins"]["components"][0]
         assert component["kind"] == "observability"
+        assert component["config"]["atof"]["enabled"] is True
+        assert component["config"]["atof"]["output_directory"] == str(tmp_path / "nemo-relay-atof")
         assert component["config"]["atif"]["agent_name"] == "openclaw"
         assert component["config"]["atif"]["output_directory"] == str(tmp_path / "nemo-relay-atif")
 

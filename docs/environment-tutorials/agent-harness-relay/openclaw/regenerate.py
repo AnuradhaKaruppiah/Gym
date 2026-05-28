@@ -221,10 +221,18 @@ def regenerate(
             "openclaw-relay*-workspaces/django__django-13741_*/openclaw-artifacts/nemo-flow-atif/*.json",
         ],
     )
+    relay_atof_path = _metadata_path(relay, "nemo_relay_atof_path", "nemo_flow_atof_path") or _latest_file_any(
+        tmp_root,
+        [
+            "openclaw-relay*-workspaces/django__django-13741_*/openclaw-artifacts/nemo-relay-atof/*.jsonl",
+            "openclaw-relay*-workspaces/django__django-13741_*/openclaw-artifacts/nemo-flow-atof/*.jsonl",
+        ],
+    )
 
     no_relay_patch_path = Path(no_relay["swebench_output_dir"]) / "patch.diff"
     relay_patch_path = Path(relay["swebench_output_dir"]) / "patch.diff"
     relay_atif = json.loads(relay_atif_path.read_text())
+    relay_atof_events = _read_jsonl(relay_atof_path)
 
     no_relay_atif = _build_no_relay_atif(
         rollout=no_relay,
@@ -236,10 +244,15 @@ def regenerate(
         json.dumps(no_relay_atif, indent=2) + "\n"
     )
     shutil.copyfile(relay_atif_path, output_dir / "with-relay.nemo-relay.atif.json")
+    shutil.copyfile(relay_atof_path, output_dir / "with-relay.nemo-relay.atof.jsonl")
     shutil.copyfile(no_relay_session_path, output_dir / "without-relay.openclaw.session.jsonl")
     shutil.copyfile(relay_session_path, output_dir / "with-relay.openclaw.session.jsonl")
 
     relay_sources = Counter(step.get("source", "unknown") for step in relay_atif.get("steps", []))
+    relay_atof_categories = Counter(
+        event.get("category") or event.get("kind") or event.get("name") or "unknown"
+        for event in relay_atof_events
+    )
     no_relay_summary = _session_summary(no_relay_session_path)
     relay_summary = _session_summary(relay_session_path)
 
@@ -261,9 +274,12 @@ def regenerate(
         },
         "with_relay": {
             "source_rollout": str(relay_rollout_path),
+            "atof_path": str(output_dir / "with-relay.nemo-relay.atof.jsonl"),
             "atif_path": str(output_dir / "with-relay.nemo-relay.atif.json"),
             "native_session_jsonl_path": str(output_dir / "with-relay.openclaw.session.jsonl"),
             "native_session_summary": relay_summary,
+            "atof_event_count": len(relay_atof_events),
+            "atof_event_categories": dict(sorted(relay_atof_categories.items())),
             "step_count": len(relay_atif.get("steps", [])),
             "step_sources": dict(sorted(relay_sources.items())),
             "reward": relay.get("reward"),

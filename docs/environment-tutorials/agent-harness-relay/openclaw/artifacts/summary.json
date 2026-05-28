@@ -2,7 +2,7 @@
   "task": "django__django-13741",
   "agent": "openclaw",
   "without_relay": {
-    "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/openclaw_django_13741_constrained_rollout.jsonl",
+    "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/openclaw_django_13741_noweb_rollout.jsonl",
     "atif_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/openclaw/artifacts/without-relay.gym-reconstructed.atif.json",
     "native_session_jsonl_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/openclaw/artifacts/without-relay.openclaw.session.jsonl",
     "native_session_summary": {
@@ -20,34 +20,42 @@
     "turns_used": 1,
     "finished_naturally": true,
     "swebench_resolved": true,
-    "patch_path": "/home/anuradhak/projects/nat/.tmp/nemo-gym/openclaw-constrained-swebench-verifier/django__django-13741_d0912be4/patch.diff",
+    "patch_path": "/home/anuradhak/projects/nat/.tmp/nemo-gym/openclaw-noweb-swebench-verifier/django__django-13741_72a3588f/patch.diff",
     "note": "Post-hoc ATIF reconstructed from Gym rollout output. OpenClaw native session JSONL is also included, but it is not normalized ATIF."
   },
   "with_relay": {
-    "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/openclaw_django_13741_relay_constrained_rollout.jsonl",
+    "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/openclaw_django_13741_relay_frontier3_noweb_rollout.jsonl",
+    "atof_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/openclaw/artifacts/with-relay.nemo-relay.atof.jsonl",
     "atif_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/openclaw/artifacts/with-relay.nemo-relay.atif.json",
     "native_session_jsonl_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/openclaw/artifacts/with-relay.openclaw.session.jsonl",
     "native_session_summary": {
-      "total_events": 16,
+      "total_events": 14,
       "event_types": {
         "custom": 1,
-        "message": 12,
+        "message": 10,
         "model_change": 1,
         "session": 1,
         "thinking_level_change": 1
       }
     },
-    "step_count": 19,
+    "atof_event_count": 23,
+    "atof_event_categories": {
+      "agent": 2,
+      "llm": 10,
+      "mark": 3,
+      "tool": 8
+    },
+    "step_count": 16,
     "step_sources": {
-      "agent": 6,
-      "system": 7,
-      "user": 6
+      "agent": 5,
+      "system": 6,
+      "user": 5
     },
     "reward": 1.0,
     "turns_used": 1,
     "finished_naturally": true,
     "swebench_resolved": true,
-    "patch_path": "/home/anuradhak/projects/nat/.tmp/nemo-gym/openclaw-relay-constrained-swebench-verifier/django__django-13741_352f5e49/patch.diff",
+    "patch_path": "/home/anuradhak/projects/nat/.tmp/nemo-gym/openclaw-relay-frontier3-noweb-swebench-verifier/django__django-13741_4d175196/patch.diff",
     "note": "NeMoRelay plugin emitted normalized ATIF from OpenClaw events. OpenClaw session JSONL is included as the raw harness log."
   },
   "comparison_note": "OpenClaw appears hook-friendly for this POC: both baseline and Relay runs have a compact native session JSONL with message/tool events, and Relay converts the enabled run into a normalized ATIF trajectory."

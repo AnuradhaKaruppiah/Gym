@@ -55,6 +55,7 @@ LOG = logging.getLogger(__name__)
 
 _NEMO_RELAY_PLUGIN_MANIFEST_ID = "nemo-relay"
 _NEMO_RELAY_OPENCLAW_NPM_VERSION = "0.3.0"
+_NEMO_RELAY_ATOF_DIR_NAME = "nemo-relay-atof"
 _NEMO_RELAY_ATIF_DIR_NAME = "nemo-relay-atif"
 
 
@@ -251,6 +252,11 @@ class OpenClawAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
         if not self.config.nemo_flow.enabled:
             return
 
+        atof_output_dir = output_dir / _NEMO_RELAY_ATOF_DIR_NAME
+        atif_output_dir = output_dir / _NEMO_RELAY_ATIF_DIR_NAME
+        atof_output_dir.mkdir(parents=True, exist_ok=True)
+        atif_output_dir.mkdir(parents=True, exist_ok=True)
+
         pid = self.config.nemo_flow.plugin_manifest_id
         plugins = cfg.setdefault("plugins", {})
         plugins.setdefault("bundledDiscovery", "compat")
@@ -286,10 +292,14 @@ class OpenClawAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
                             "enabled": True,
                             "config": {
                                 "version": 1,
+                                "atof": {
+                                    "enabled": True,
+                                    "output_directory": str(atof_output_dir),
+                                },
                                 "atif": {
                                     "enabled": True,
                                     "agent_name": "openclaw",
-                                    "output_directory": str(output_dir / _NEMO_RELAY_ATIF_DIR_NAME),
+                                    "output_directory": str(atif_output_dir),
                                 },
                                 "opentelemetry": {"enabled": False},
                                 "openinference": {"enabled": False},
@@ -437,9 +447,20 @@ class OpenClawAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
             "openclaw_setup_stderr_path": str(artifact_root / "openclaw.setup.stderr.txt"),
         }
         if self.config.nemo_flow.enabled:
+            nemo_flow_atof_output_dir = artifact_root / _NEMO_RELAY_ATOF_DIR_NAME
             nemo_flow_output_dir = artifact_root / _NEMO_RELAY_ATIF_DIR_NAME
-            metadata["nemo_relay_output_dir"] = str(nemo_flow_output_dir)
-            metadata["nemo_flow_output_dir"] = str(nemo_flow_output_dir)
+            metadata["nemo_relay_output_dir"] = str(artifact_root)
+            metadata["nemo_flow_output_dir"] = str(artifact_root)
+            metadata["nemo_relay_atof_output_dir"] = str(nemo_flow_atof_output_dir)
+            metadata["nemo_flow_atof_output_dir"] = str(nemo_flow_atof_output_dir)
+            atof_paths = sorted(str(path) for path in nemo_flow_atof_output_dir.glob("*.jsonl"))
+            if atof_paths:
+                metadata["nemo_relay_atof_path"] = atof_paths[0]
+                metadata["nemo_relay_atof_paths"] = json.dumps(atof_paths)
+                metadata["nemo_flow_atof_path"] = atof_paths[0]
+                metadata["nemo_flow_atof_paths"] = json.dumps(atof_paths)
+            metadata["nemo_relay_atif_output_dir"] = str(nemo_flow_output_dir)
+            metadata["nemo_flow_atif_output_dir"] = str(nemo_flow_output_dir)
             atif_paths = sorted(str(path) for path in nemo_flow_output_dir.glob("*.json"))
             if atif_paths:
                 metadata["nemo_relay_atif_path"] = atif_paths[0]
