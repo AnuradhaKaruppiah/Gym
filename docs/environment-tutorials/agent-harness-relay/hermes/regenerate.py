@@ -150,6 +150,22 @@ def _default_output_dir() -> Path:
     return Path(__file__).resolve().parent / "artifacts"
 
 
+def _display_path(path: Path | None, tmp_root: Path, output_dir: Path) -> str | None:
+    if path is None:
+        return None
+
+    path = path.expanduser()
+    try:
+        return str(Path("artifacts") / path.resolve().relative_to(output_dir.resolve()))
+    except ValueError:
+        pass
+
+    try:
+        return str(Path("${GYM_OUTPUT_DIR}") / path.resolve().relative_to(tmp_root.resolve()))
+    except ValueError:
+        return str(path)
+
+
 def regenerate(
     tmp_root: Path,
     output_dir: Path,
@@ -208,10 +224,14 @@ def regenerate(
         },
         "extra": {
             "source": "post-hoc Gym rollout reconstruction",
-            "source_rollout_path": str(no_relay_rollout_path),
+            "source_rollout_path": _display_path(no_relay_rollout_path, tmp_root, output_dir),
             "instance_id": INSTANCE_ID,
             "agent_ref": no_relay.get("agent_ref"),
-            "swebench_output_dir": no_relay.get("swebench_output_dir"),
+            "swebench_output_dir": _display_path(
+                Path(no_relay["swebench_output_dir"]) if no_relay.get("swebench_output_dir") else None,
+                tmp_root,
+                output_dir,
+            ),
             "patch": _patch_text(no_relay, no_relay_patch_path),
             "limitations": [
                 "Gym rollout output stores Responses API output items, not Relay event capture.",
@@ -238,21 +258,21 @@ def regenerate(
         "task": INSTANCE_ID,
         "agent": "hermes",
         "without_relay": {
-            "source_rollout": str(no_relay_rollout_path),
-            "atif_path": str(output_dir / "without-relay.gym-reconstructed.atif.json"),
+            "source_rollout": _display_path(no_relay_rollout_path, tmp_root, output_dir),
+            "atif_path": _display_path(output_dir / "without-relay.gym-reconstructed.atif.json", tmp_root, output_dir),
             "step_count": len(no_relay_atif["steps"]),
             "response_output_type_counts": dict(sorted(no_relay_output_types.items())),
             "reward": no_relay.get("reward"),
             "turns_used": no_relay.get("turns_used"),
             "finished_naturally": no_relay.get("finished_naturally"),
             "swebench_resolved": no_relay.get("swebench_resolved"),
-            "patch_path": str(no_relay_patch_path) if no_relay_patch_path else None,
+            "patch_path": _display_path(no_relay_patch_path, tmp_root, output_dir),
             "note": "Post-hoc ATIF reconstructed from Gym Responses output items; baseline path uses Gym output without Relay event capture.",
         },
         "with_relay": {
-            "source_rollout": str(relay_rollout_path),
-            "atif_path": str(output_dir / "with-relay.nemo-relay.atif.json"),
-            "atof_path": str(output_dir / "with-relay.nemo-relay.atof.jsonl"),
+            "source_rollout": _display_path(relay_rollout_path, tmp_root, output_dir),
+            "atif_path": _display_path(output_dir / "with-relay.nemo-relay.atif.json", tmp_root, output_dir),
+            "atof_path": _display_path(output_dir / "with-relay.nemo-relay.atof.jsonl", tmp_root, output_dir),
             "step_count": len(relay_atif.get("steps", [])),
             "step_sources": dict(sorted(relay_sources.items())),
             "atof_event_count": len(atof_events),
@@ -262,7 +282,7 @@ def regenerate(
             "turns_used": relay.get("turns_used"),
             "finished_naturally": relay.get("finished_naturally"),
             "swebench_resolved": relay.get("swebench_resolved"),
-            "patch_path": str(relay_patch_path) if relay_patch_path else None,
+            "patch_path": _display_path(relay_patch_path, tmp_root, output_dir),
             "note": "Adapter-level NeMoRelay capture around Hermes callbacks emitted ATOF plus normalized ATIF.",
         },
         "comparison_note": "Hermes is useful for comparison because the baseline Gym response already has tool call/output items, and Relay adds ATOF plus a normalized ATIF trajectory. The ATIF is currently noisier than OpenClaw because the adapter projects Hermes callbacks and assistant messages rather than consuming a native harness session log.",

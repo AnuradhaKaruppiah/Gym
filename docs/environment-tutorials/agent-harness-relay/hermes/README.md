@@ -12,24 +12,27 @@ This directory compares artifacts for the same SWE-bench Verified task with and 
 
 ## Current Snapshot
 
-The current regenerated snapshot uses the same `django__django-13741` task, but
-this particular Hermes model pass did not produce a patch and did not resolve
-the verifier (`reward=0.0`). The artifacts are still useful for comparing the
-Gym response shape against Relay's ATOF/ATIF capture.
+The current regenerated snapshot uses the same `django__django-13741` task with
+Hermes constrained to local SWE-style tools: `terminal`, `file`, and
+`code_execution`. This avoids browser/web-search behavior and produces a real
+workspace patch.
 
 Baseline Gym/Hermes:
 
-- 92 reconstructed ATIF steps
-- 31 assistant message items
-- 30 function calls
-- 30 function-call outputs
+- reward `1.0`; SWE-bench resolved
+- 29 reconstructed ATIF steps
+- 10 assistant message items
+- 9 function calls
+- 9 function-call outputs
 
 Relay-enabled Gym/Hermes:
 
-- 154 ATOF events
-- 122 ATIF steps
-- ATIF source split: 31 agent, 31 user, 60 system
-- 31 turns used by the Hermes agent
+- reward `1.0`; SWE-bench resolved
+- 35 ATOF events
+- 27 ATIF steps
+- ATIF source split: 7 agent, 7 user, 13 system
+- 7 turns used by the Hermes agent
+- tool calls captured in Relay ATIF: `search_files`, `read_file`, `patch`
 
 Hermes is useful for comparison because the baseline Gym response already has structured tool call/output items, while Relay adds raw ATOF plus normalized ATIF. The current Hermes ATIF is noisier than OpenClaw because the adapter projects Hermes callbacks and assistant messages rather than consuming a native harness session log.
 
@@ -140,7 +143,8 @@ set +a
   "+hermes_agent.responses_api_agents.hermes_agent.workspace_root=${GYM_OUTPUT_DIR}/hermes-workspaces" \
   +hermes_agent.responses_api_agents.hermes_agent.verify_swebench=true \
   "+hermes_agent.responses_api_agents.hermes_agent.swebench_results_root=${GYM_OUTPUT_DIR}/hermes-swebench-verifier" \
-  +hermes_agent.responses_api_agents.hermes_agent.temperature=0.2
+  +hermes_agent.responses_api_agents.hermes_agent.temperature=0.2 \
+  '+hermes_agent.responses_api_agents.hermes_agent.enabled_toolsets=[terminal,file,code_execution]'
 ```
 
 Terminal 2:
@@ -186,6 +190,7 @@ set +a
   +hermes_agent.responses_api_agents.hermes_agent.verify_swebench=true \
   "+hermes_agent.responses_api_agents.hermes_agent.swebench_results_root=${GYM_OUTPUT_DIR}/hermes-relay-swebench-verifier" \
   +hermes_agent.responses_api_agents.hermes_agent.temperature=0.2 \
+  '+hermes_agent.responses_api_agents.hermes_agent.enabled_toolsets=[terminal,file,code_execution]' \
   +hermes_agent.responses_api_agents.hermes_agent.nemo_relay.enabled=true \
   "+hermes_agent.responses_api_agents.hermes_agent.nemo_relay.python_path=${NEMO_RELAY_PYTHON_PATH}" \
   "+hermes_agent.responses_api_agents.hermes_agent.nemo_relay.output_dir=${GYM_OUTPUT_DIR}/hermes-nemo-relay"
