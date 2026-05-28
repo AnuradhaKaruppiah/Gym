@@ -19,6 +19,7 @@ To inspect an ATIF trajectory visually, see [Viewing ATIF In Phoenix](phoenix.at
 ## Harness Bundles
 
 - `hermes/`: runbook, regeneration script, and artifacts for Hermes on `django__django-13741`.
+- `hermes-offrails/`: preserved unconstrained Hermes trace showing why trajectory evaluation matters.
 - `openclaw/`: runbook, regeneration script, and artifacts for OpenClaw on `django__django-13741`.
 - `opencode/`: captured artifacts for OpenCode on `django__django-13741`.
 
