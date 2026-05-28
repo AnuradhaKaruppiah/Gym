@@ -50,14 +50,3 @@ This artifact demonstrates why trajectory evaluation matters:
 
 - `artifacts/with-relay.offrails.nemo-relay.atif.json`: Relay ATIF from the
   unconstrained Hermes run.
-
-## Phoenix Reference
-
-This trace was also uploaded to the local Phoenix database as:
-
-```text
-gym-hermes-offrails-with-relay-20260527-200335
-```
-
-Use it alongside the constrained Hermes projects to compare the behavioral
-difference in the trace viewer.
