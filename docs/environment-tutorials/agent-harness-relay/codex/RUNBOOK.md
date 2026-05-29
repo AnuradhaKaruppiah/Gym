@@ -80,6 +80,14 @@ cd "${GYM_SOURCE_DIR}"
   "+codex_agent.responses_api_agents.codex_agent.nemo_relay.output_dir=${CODEX_RELAY_OUTPUT_DIR}"
 ```
 
+Optional Phoenix/OpenInference view:
+
+```bash
+  +codex_agent.responses_api_agents.codex_agent.nemo_relay.openinference.enabled=true \
+  +codex_agent.responses_api_agents.codex_agent.nemo_relay.openinference.endpoint=http://127.0.0.1:6006/v1/traces \
+  +codex_agent.responses_api_agents.codex_agent.nemo_relay.openinference.project_name=oi-gym-codex-relay
+```
+
 Terminal 2:
 
 ```bash

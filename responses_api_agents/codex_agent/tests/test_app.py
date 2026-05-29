@@ -30,6 +30,8 @@ from nemo_gym.server_utils import ServerClient
 from responses_api_agents.codex_agent.app import (
     CodexAgent,
     CodexAgentConfig,
+    CodexNemoRelayConfig,
+    _CodexNemoRelayCapture,
     _extract_instruction,
     parse_codex_jsonl,
 )
@@ -70,6 +72,10 @@ class TestSanity:
         assert cfg.nemo_relay.atof_filename == "codex.atof.jsonl"
         assert cfg.nemo_relay.atif_filename_template == "codex-{session_id}.atif.json"
         assert cfg.nemo_relay.include_raw_events is True
+        assert cfg.nemo_relay.openinference.enabled is False
+        assert cfg.nemo_relay.openinference.endpoint is None
+        assert cfg.nemo_relay.openinference.transport == "http_binary"
+        assert cfg.nemo_relay.openinference.project_name is None
         assert cfg.verify_swebench is False
         assert cfg.swebench_results_root == "outputs/codex_agent/swebench-verifier"
         assert cfg.swebench_model_name == "codex_agent"
@@ -210,6 +216,12 @@ class TestConfigYaml:
         assert inner["nemo_relay"]["atof_filename"] == "codex.atof.jsonl"
         assert inner["nemo_relay"]["atif_filename_template"] == "codex-{session_id}.atif.json"
         assert inner["nemo_relay"]["include_raw_events"] is True
+        assert inner["nemo_relay"]["openinference"]["enabled"] is False
+        assert inner["nemo_relay"]["openinference"]["endpoint"] is None
+        assert inner["nemo_relay"]["openinference"]["transport"] == "http_binary"
+        assert inner["nemo_relay"]["openinference"]["service_name"] == "nemo-relay-codex"
+        assert inner["nemo_relay"]["openinference"]["project_name"] is None
+        assert inner["nemo_relay"]["openinference"]["headers"] == {}
         assert inner["verify_swebench"] is False
         assert inner["swebench_setup_dir"] is None
         assert inner["swebench_results_root"] == "outputs/codex_agent/swebench-verifier"
@@ -227,3 +239,60 @@ class TestConfigYaml:
         metadata = row["responses_create_params"]["metadata"]
         assert metadata["harbor_task_path"].endswith("django__django-13741")
         assert metadata["instance_id"] == row["instance_id"]
+
+
+class TestOpenInferenceConfig:
+    def test_disabled_openinference_skips_registration(self) -> None:
+        capture = object.__new__(_CodexNemoRelayCapture)
+        capture.config = CodexNemoRelayConfig()
+        capture._openinference = None
+        capture._openinference_subscriber = None
+
+        capture._register_openinference(MagicMock(), MagicMock())
+
+        assert capture._openinference is None
+        assert capture._openinference_subscriber is None
+
+    def test_register_openinference_project_header(self) -> None:
+        class FakeOpenInferenceConfig:
+            def __init__(self) -> None:
+                self.headers = {}
+                self.resource_attributes = {}
+
+            def set_header(self, key: str, value: str) -> None:
+                self.headers[key] = value
+
+        class FakeOpenInferenceSubscriber:
+            def __init__(self, config: FakeOpenInferenceConfig) -> None:
+                self.config = config
+                self.registered = []
+
+            def register(self, name: str) -> None:
+                self.registered.append(name)
+
+        capture = object.__new__(_CodexNemoRelayCapture)
+        capture.config = CodexNemoRelayConfig(
+            openinference={
+                "enabled": True,
+                "endpoint": "http://127.0.0.1:6006/v1/traces",
+                "project_name": "oi-gym-codex-relay",
+                "headers": {"authorization": "Bearer test"},
+                "resource_attributes": {"deployment.environment": "test"},
+            }
+        )
+        capture._openinference = None
+        capture._openinference_subscriber = None
+
+        capture._register_openinference(FakeOpenInferenceConfig, FakeOpenInferenceSubscriber)
+
+        assert isinstance(capture._openinference, FakeOpenInferenceSubscriber)
+        assert capture._openinference_subscriber.startswith("codex_openinference_")
+        config = capture._openinference.config
+        assert config.endpoint == "http://127.0.0.1:6006/v1/traces"
+        assert config.transport == "http_binary"
+        assert config.service_name == "nemo-relay-codex"
+        assert config.service_namespace == "gym"
+        assert config.headers["authorization"] == "Bearer test"
+        assert config.headers["x-project-name"] == "oi-gym-codex-relay"
+        assert config.resource_attributes == {"deployment.environment": "test"}
+        assert capture._openinference.registered == [capture._openinference_subscriber]

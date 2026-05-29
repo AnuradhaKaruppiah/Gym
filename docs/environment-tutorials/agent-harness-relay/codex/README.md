@@ -31,6 +31,11 @@ Gym while preserving Codex-native `command_execution` and `file_change` records
 in ATOF. It does not depend on Codex hook support or the Relay gateway provider
 alias.
 
+OpenInference export is an optional sibling view. Leave
+`nemo_relay.openinference.enabled=false` for file-only ATOF/ATIF capture, or
+enable it with an OTLP endpoint such as Phoenix when live span telemetry is
+useful.
+
 ## Snapshot
 
 The Relay-enabled Codex run produced a patch for the SWE-bench task and finished

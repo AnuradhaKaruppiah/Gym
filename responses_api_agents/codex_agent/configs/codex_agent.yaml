@@ -35,6 +35,18 @@ codex_agent:
         agent_version: 0.1.0
         mode: overwrite
         include_raw_events: true
+        openinference:
+          enabled: false
+          endpoint: null
+          transport: http_binary
+          service_name: nemo-relay-codex
+          service_namespace: gym
+          service_version: null
+          instrumentation_scope: nemo-relay-openinference
+          timeout_millis: 3000
+          project_name: null
+          headers: {}
+          resource_attributes: {}
       verify_swebench: false
       swebench_setup_dir: null
       swebench_results_root: outputs/codex_agent/swebench-verifier

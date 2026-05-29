@@ -251,6 +251,20 @@ def _iter_codex_json_events(stdout: str):
             yield line_no, {"type": "non_object", "value": event}
 
 
+class CodexOpenInferenceConfig(BaseModel):
+    enabled: bool = False
+    endpoint: Optional[str] = None
+    transport: str = "http_binary"
+    service_name: str = "nemo-relay-codex"
+    service_namespace: Optional[str] = "gym"
+    service_version: Optional[str] = None
+    instrumentation_scope: str = "nemo-relay-openinference"
+    timeout_millis: int = 3000
+    project_name: Optional[str] = None
+    headers: dict[str, str] = Field(default_factory=dict)
+    resource_attributes: dict[str, str] = Field(default_factory=dict)
+
+
 class CodexNemoRelayConfig(BaseModel):
     enabled: bool = False
     python_path: Optional[str] = None
@@ -261,6 +275,7 @@ class CodexNemoRelayConfig(BaseModel):
     agent_version: str = "0.1.0"
     mode: str = "overwrite"
     include_raw_events: bool = True
+    openinference: CodexOpenInferenceConfig = Field(default_factory=CodexOpenInferenceConfig)
 
 
 def _json_arguments(value: Any) -> Any:
@@ -304,6 +319,8 @@ class _CodexNemoRelayCapture:
                 AtofExporterConfig,
                 AtofExporterMode,
                 LLMRequest,
+                OpenInferenceConfig,
+                OpenInferenceSubscriber,
                 ScopeType,
                 llm,
                 scope,
@@ -317,6 +334,8 @@ class _CodexNemoRelayCapture:
                 AtofExporterConfig,
                 AtofExporterMode,
                 LLMRequest,
+                OpenInferenceConfig,
+                OpenInferenceSubscriber,
                 ScopeType,
                 llm,
                 scope,
@@ -337,6 +356,8 @@ class _CodexNemoRelayCapture:
         self.atof_path = relay_dir / config.atof_filename
         self.atif_path = relay_dir / config.atif_filename_template.format(session_id=self.session_id)
         self._tool_handles: dict[str, Any] = {}
+        self._openinference = None
+        self._openinference_subscriber: Optional[str] = None
 
         atof_config = AtofExporterConfig()
         atof_config.output_directory = str(relay_dir)
@@ -358,6 +379,7 @@ class _CodexNemoRelayCapture:
         )
         self._atif_subscriber = f"codex_atif_{uuid4().hex}"
         self._atif_exporter.register(self._atif_subscriber)
+        self._register_openinference(OpenInferenceConfig, OpenInferenceSubscriber)
 
         self._agent_handle = scope.push(
             config.agent_name,
@@ -370,6 +392,28 @@ class _CodexNemoRelayCapture:
                 },
             },
         )
+
+    def _register_openinference(self, OpenInferenceConfig: Any, OpenInferenceSubscriber: Any) -> None:
+        config = self.config.openinference
+        if not config.enabled:
+            return
+
+        oi_config = OpenInferenceConfig()
+        oi_config.transport = config.transport
+        oi_config.endpoint = config.endpoint
+        oi_config.service_name = config.service_name
+        oi_config.service_namespace = config.service_namespace
+        oi_config.service_version = config.service_version
+        oi_config.instrumentation_scope = config.instrumentation_scope
+        oi_config.timeout_millis = config.timeout_millis
+        oi_config.headers = dict(config.headers)
+        oi_config.resource_attributes = dict(config.resource_attributes)
+        if config.project_name:
+            oi_config.set_header("x-project-name", config.project_name)
+
+        self._openinference = OpenInferenceSubscriber(oi_config)
+        self._openinference_subscriber = f"codex_openinference_{uuid4().hex}"
+        self._openinference.register(self._openinference_subscriber)
 
     def record_raw_events(self, stdout: str) -> None:
         if not self.config.include_raw_events:
@@ -477,17 +521,31 @@ class _CodexNemoRelayCapture:
         self.atif_path.write_text(self._atif_exporter.export_json())
         self._atif_exporter.deregister(self._atif_subscriber)
         self._atof_exporter.deregister(self._atof_subscriber)
+        if self._openinference and self._openinference_subscriber:
+            self._openinference.deregister(self._openinference_subscriber)
+            self._openinference.force_flush()
+            self._openinference.shutdown()
+            self._subscribers.deregister(self._openinference_subscriber)
         self._atof_exporter.force_flush()
         self._atof_exporter.shutdown()
         self._subscribers.deregister(self._atof_subscriber)
         self._subscribers.deregister(self._atif_subscriber)
 
-        return {
+        metadata = {
             "nemo_relay_output_dir": str(self.relay_dir),
             "nemo_relay_atof_path": str(self.atof_path) if self.atof_path.exists() else "",
             "nemo_relay_atif_path": str(self.atif_path) if self.atif_path.exists() else "",
             "nemo_relay_atif_paths": json.dumps([str(self.atif_path)] if self.atif_path.exists() else []),
         }
+        if self.config.openinference.enabled:
+            metadata.update(
+                {
+                    "nemo_relay_openinference_enabled": "true",
+                    "nemo_relay_openinference_endpoint": self.config.openinference.endpoint or "",
+                    "nemo_relay_openinference_project": self.config.openinference.project_name or "",
+                }
+            )
+        return metadata
 
 
 class CodexAgentConfig(BaseResponsesAPIAgentConfig):

@@ -34,6 +34,19 @@ trajectory to feed into viewers, validators, and eval tooling. The checked-in
 ATIF files were projected from Relay events after the current correlation fixes.
 To inspect ATIF visually, see [Viewing ATIF In Phoenix](phoenix.atif.md).
 
+## Discussion-Ready Outcome
+
+The POC now covers five Gym harnesses with a consistent artifact contract:
+enable Relay at the harness boundary, keep ATOF/ATIF as local durable files, and
+treat backend uploads as optional views. Codex also exercises an optional
+OpenInference export to Phoenix from the same Relay capture path, which shows
+that the file-first contract can support multiple downstream visualizations
+without making a live telemetry server mandatory.
+
+Known follow-up: Codex ATOF preserves native `command_execution` and
+`file_change` records, but the current Codex ATIF/OpenInference projection still
+shows only agent/LLM spans. That is a projection gap, not a capture gap.
+
 ## Layout
 
 Each harness directory keeps the readable overview in `README.md`, the run
