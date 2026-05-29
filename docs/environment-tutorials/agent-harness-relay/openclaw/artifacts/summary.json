@@ -2,33 +2,33 @@
   "task": "django__django-13741",
   "agent": "openclaw",
   "with_relay": {
-    "source_rollout": ".tmp/nemo-gym-relay169/openclaw_rebuilt_django_13741_relay_rollout.jsonl",
+    "source_rollout": ".tmp/nemo-gym-relay178/openclaw_pr178_django_13741_relay_rollout.jsonl",
     "atif_path": "artifacts/with-relay.nemo-relay.atif.json",
     "atof_path": "artifacts/with-relay.nemo-relay.atof.jsonl",
     "native_session_jsonl_path": "artifacts/with-relay.openclaw.session.jsonl",
     "schema_version": "ATIF-v1.7",
-    "step_count": 16,
+    "step_count": 13,
     "step_sources": {
-      "agent": 6,
-      "system": 4,
-      "user": 6
+      "agent": 5,
+      "system": 3,
+      "user": 5
     },
-    "atof_event_count": 27,
+    "atof_event_count": 23,
     "atof_event_categories": {
       "agent": 2,
-      "llm": 12,
+      "llm": 10,
       "mark": 3,
-      "tool": 10
+      "tool": 8
     },
-    "tool_call_count": 5,
-    "tool_observation_results": 5,
-    "same_step_correlated_results": 0,
-    "standalone_observation_steps": 1,
+    "tool_call_count": 4,
+    "tool_observation_results": 4,
+    "same_step_correlated_results": 4,
+    "standalone_observation_steps": 0,
     "native_session_summary": {
-      "total_events": 16,
+      "total_events": 14,
       "event_types": {
         "custom": 1,
-        "message": 12,
+        "message": 10,
         "model_change": 1,
         "session": 1,
         "thinking_level_change": 1
@@ -38,8 +38,8 @@
     "turns_used": 1,
     "finished_naturally": true,
     "swebench_resolved": true,
-    "phoenix_project": "atif-gym-openclaw-relay",
-    "note": "NeMoFlow plugin capture emits the full ATOF tool stream. The current ATIF is valid but still groups OpenClaw tool results into one standalone observation step."
+    "phoenix_project": "atif-gym-openclaw-relay-pr178",
+    "note": "NeMoFlow plugin capture emits the full ATOF tool stream. The ATIF now includes inline same-step tool observations after the OpenClaw tool-call visibility fix."
   },
   "without_relay": {
     "atif_path": "artifacts/without-relay.gym-reconstructed.atif.json",
