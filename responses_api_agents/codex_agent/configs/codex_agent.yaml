@@ -1,0 +1,47 @@
+codex_agent:
+  responses_api_agents:
+    codex_agent:
+      entrypoint: app.py
+      resources_server: null
+      model_server: null
+      concurrency: 8
+      command: codex
+      model: null
+      profile: null
+      openai_api_key: ${openai_api_key}
+      openai_base_url: ${openai_base_url}
+      work_dir: null
+      workspace_root: outputs/codex_agent/workspaces
+      container_formatter: null
+      apptainer_command: apptainer
+      setup_timeout: 900
+      timeout: 900
+      sandbox: workspace-write
+      approval_policy: never
+      ephemeral: true
+      ignore_user_config: false
+      ignore_rules: false
+      skip_git_repo_check: true
+      system_prompt: null
+      config_overrides: []
+      extra_args: []
+      nemo_relay:
+        enabled: false
+        python_path: null
+        output_dir: null
+        atof_filename: codex.atof.jsonl
+        atif_filename_template: codex-{session_id}.atif.json
+        agent_name: codex
+        agent_version: 0.1.0
+        mode: overwrite
+        include_raw_events: true
+      verify_swebench: false
+      swebench_setup_dir: null
+      swebench_results_root: outputs/codex_agent/swebench-verifier
+      swebench_verifier_timeout: 1200
+      swebench_model_name: codex_agent
+      datasets:
+        - name: django_13741_smoke
+          type: example
+          jsonl_fpath: responses_api_agents/codex_agent/data/django_13741_smoke.jsonl
+          license: Apache 2.0

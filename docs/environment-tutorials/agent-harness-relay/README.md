@@ -26,10 +26,11 @@ consistent observability layer across them.
 | Hermes | Python adapter-level NeMoRelay capture around Hermes callbacks | [hermes/](hermes/) |
 | OpenClaw | Optional NeMoFlow plugin loaded by the OpenClaw harness | [openclaw/](openclaw/) |
 | OpenCode | Optional NeMoFlow plugin inside the OpenCode runtime | [opencode/](opencode/) |
+| Codex | Optional Python NeMoRelay exporters around `codex exec --json` in the Gym wrapper | [codex/](codex/) |
 
 ATOF is the source trace to use when losslessness matters. ATIF is the normalized
 trajectory to feed into viewers, validators, and eval tooling. The checked-in
-ATIF files were generated from Relay ATOF after the current correlation fixes.
+ATIF files were projected from Relay events after the current correlation fixes.
 To inspect ATIF visually, see [Viewing ATIF In Phoenix](phoenix.atif.md).
 
 ## Layout
@@ -38,4 +39,4 @@ Each harness directory keeps the readable overview in `README.md`, the run
 commands in `RUNBOOK.md`, and generated payloads in `artifacts/`.
 
 `hermes-offrails/` is a preserved off-rails trace that demonstrates why richer
-trajectory capture is useful, but it is not one of the three main POC harnesses.
+trajectory capture is useful, but it is not one of the main POC harnesses.

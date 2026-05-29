@@ -1,0 +1,47 @@
+{
+  "counts": {
+    "atif_source_counts": {
+      "agent": 16,
+      "user": 16
+    },
+    "atif_steps": 32,
+    "atof_events": 218,
+    "atof_kind_counts": {
+      "mark": 184,
+      "scope": 34
+    },
+    "atof_mark_counts": {
+      "llm.chunk": 184
+    },
+    "completed_command_executions": 78,
+    "completed_file_changes": 4,
+    "raw_codex_item_counts": {
+      "agent_message": 16,
+      "command_execution": 156,
+      "error": 1,
+      "file_change": 8
+    },
+    "raw_codex_json_events": 184
+  },
+  "harness": "codex",
+  "notes": [
+    "This Codex Gym POC uses direct Python Relay exporters around codex exec --json rather than the stock nemo-relay run -- codex wrapper.",
+    "Raw Codex command_execution and file_change records are preserved in ATOF as codex.json_event llm.chunk marks.",
+    "Current ATIF projection keeps assistant trajectory messages but does not yet map Codex command_execution/file_change records into ATIF tool steps."
+  ],
+  "relay_artifacts": {
+    "atif": "with-relay.nemo-relay.atif.json",
+    "atof": "with-relay.nemo-relay.atof.jsonl"
+  },
+  "run": {
+    "finished_naturally": 1.0,
+    "patch_exists": true,
+    "reward": 0.0,
+    "turns_used": 16.0,
+    "verify_swebench": false
+  },
+  "secondary_artifacts": {
+    "gym_rollout": "with-relay.gym-rollout.jsonl"
+  },
+  "task": "django__django-13741"
+}
