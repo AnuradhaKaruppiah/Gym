@@ -23,6 +23,7 @@ native runtime details.
 
 Both OpenCode runs resolve the SWE-bench task with `reward=1.0`.
 
-The checked-in Relay bundle includes native OpenCode NeMoFlow capture, with ATOF
-as the lossless source trace and ATIF as the portable trajectory projection.
+The checked-in Relay bundle includes native OpenCode NeMoFlow capture. It emits
+4,074 ATOF events, a 55-step main ATIF trajectory, and a 16-step `explore`
+subagent trajectory embedded in the main ATIF and preserved as a separate file.
 The reconstructed baseline is retained only as supporting context.

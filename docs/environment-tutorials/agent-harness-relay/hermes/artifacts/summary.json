@@ -1,50 +1,42 @@
 {
   "task": "django__django-13741",
   "agent": "hermes",
+  "with_relay": {
+    "source_rollout": ".tmp/nemo-gym-relay169/hermes_rebuilt_django_13741_relay_rollout.jsonl",
+    "atif_path": "artifacts/with-relay.nemo-relay.atif.json",
+    "atof_path": "artifacts/with-relay.nemo-relay.atof.jsonl",
+    "schema_version": "ATIF-v1.7",
+    "step_count": 66,
+    "step_sources": {
+      "agent": 22,
+      "system": 22,
+      "user": 22
+    },
+    "atof_event_count": 110,
+    "atof_event_categories": {
+      "agent": 2,
+      "llm": 44,
+      "mark": 22,
+      "tool": 42
+    },
+    "agent_tool_steps": 21,
+    "tool_observation_results": 21,
+    "same_step_correlated_results": 21,
+    "standalone_observation_steps": 0,
+    "reward": 1.0,
+    "turns_used": 22,
+    "finished_naturally": true,
+    "swebench_resolved": true,
+    "phoenix_project": "atif-gym-hermes-relay",
+    "note": "Adapter-level NeMoRelay capture around Hermes callbacks emitted lossless ATOF plus a normalized ATIF with inline tool observations after the RELAY-169 fix."
+  },
   "without_relay": {
-    "source_rollout": "${GYM_OUTPUT_DIR}/hermes_django_13741_rollout.jsonl",
     "atif_path": "artifacts/without-relay.gym-reconstructed.atif.json",
     "step_count": 29,
-    "response_output_type_counts": {
-      "function_call": 9,
-      "function_call_output": 9,
-      "message": 10
-    },
     "reward": 1.0,
     "turns_used": 10,
     "finished_naturally": true,
     "swebench_resolved": true,
-    "patch_path": "${GYM_OUTPUT_DIR}/hermes-swebench-verifier/django__django-13741_5ce1de27/patch.diff",
-    "note": "Post-hoc ATIF reconstructed from Gym Responses output items; baseline path uses Gym output without Relay event capture."
-  },
-  "with_relay": {
-    "source_rollout": "${GYM_OUTPUT_DIR}/hermes_django_13741_relay_rollout.jsonl",
-    "atif_path": "artifacts/with-relay.nemo-relay.atif.json",
-    "atof_path": "artifacts/with-relay.nemo-relay.atof.jsonl",
-    "step_count": 27,
-    "step_sources": {
-      "agent": 7,
-      "system": 13,
-      "user": 7
-    },
-    "atof_event_count": 35,
-    "atof_event_categories": {
-      "agent": 2,
-      "llm": 14,
-      "mark": 7,
-      "tool": 12
-    },
-    "response_output_type_counts": {
-      "function_call": 6,
-      "function_call_output": 6,
-      "message": 7
-    },
-    "reward": 1.0,
-    "turns_used": 7,
-    "finished_naturally": true,
-    "swebench_resolved": true,
-    "patch_path": "${GYM_OUTPUT_DIR}/hermes-relay-swebench-verifier/django__django-13741_d2715032/patch.diff",
-    "note": "Adapter-level NeMoRelay capture around Hermes callbacks emitted ATOF plus normalized ATIF."
-  },
-  "comparison_note": "Hermes is useful for comparison because the baseline Gym response already has tool call/output items, and Relay adds ATOF plus a normalized ATIF trajectory. The ATIF is currently noisier than OpenClaw because the adapter projects Hermes callbacks and assistant messages rather than consuming a native harness session log."
+    "note": "Secondary baseline reconstructed after the fact from Gym Responses output items."
+  }
 }

@@ -1,29 +1,45 @@
 {
   "task": "django__django-13741",
   "agent": "opencode",
+  "with_relay": {
+    "source_rollout": ".tmp/nemo-gym-relay169/opencode_rebuilt_django_13741_relay_rollout.jsonl",
+    "atif_path": "artifacts/with-relay.nemo-relay.atif.json",
+    "subagent_atif_paths": [
+      "artifacts/with-relay.nemo-relay.explore.atif.json"
+    ],
+    "atof_path": "artifacts/with-relay.nemo-relay.atof.jsonl",
+    "schema_version": "ATIF-v1.7",
+    "step_count": 55,
+    "step_sources": {
+      "agent": 28,
+      "user": 27
+    },
+    "subagent_step_counts": {
+      "explore": 16
+    },
+    "atof_event_count": 4074,
+    "atof_event_categories": {
+      "agent": 3,
+      "llm": 70,
+      "mark": 3913,
+      "tool": 88
+    },
+    "agent_tool_steps": 27,
+    "tool_observation_results": 30,
+    "same_step_correlated_results": 30,
+    "standalone_observation_steps": 0,
+    "reward": 1.0,
+    "turns_used": 20,
+    "finished_naturally": true,
+    "swebench_resolved": true,
+    "phoenix_project": "atif-gym-opencode-relay",
+    "note": "Native OpenCode NeMoFlow capture emitted ATOF plus ATIF. The main ATIF embeds the explore subagent trajectory and the subagent is also preserved as a separate ATIF file."
+  },
   "without_relay": {
-    "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/opencode_django_13741_verified_rollout.jsonl",
-    "atif_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/opencode/artifacts/without-relay.gym-reconstructed.atif.json",
+    "atif_path": "artifacts/without-relay.gym-reconstructed.atif.json",
     "step_count": 32,
     "reward": 1.0,
     "swebench_resolved": true,
-    "note": "Post-hoc ATIF reconstructed from Gym response output; baseline path uses Gym output without Relay event capture."
-  },
-  "with_relay": {
-    "source_rollout": "/home/anuradhak/projects/nat/.tmp/nemo-gym/opencode_django_13741_rerun4_20260528_rollout.jsonl",
-    "atif_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/opencode/artifacts/with-relay.nemo-relay.atif.json",
-    "subagent_atif_paths": [
-      "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/opencode/artifacts/with-relay.nemo-relay.explore.atif.json"
-    ],
-    "atof_path": "/home/anuradhak/projects/nat/external/nemo-gym/docs/environment-tutorials/agent-harness-relay/opencode/artifacts/with-relay.nemo-relay.atof.jsonl",
-    "schema_version": "ATIF-v1.7",
-    "step_count": 4773,
-    "subagent_step_counts": {
-      "explore": 931
-    },
-    "atof_event_count": 5763,
-    "reward": 1.0,
-    "swebench_resolved": true,
-    "note": "Native NeMoRelay capture from OpenCode plugin with ATOF events and ATIF projection."
+    "note": "Secondary baseline reconstructed after the fact from Gym response output."
   }
 }

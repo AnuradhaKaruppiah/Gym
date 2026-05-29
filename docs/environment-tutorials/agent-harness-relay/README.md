@@ -28,8 +28,9 @@ consistent observability layer across them.
 | OpenCode | Optional NeMoFlow plugin inside the OpenCode runtime | [opencode/](opencode/) |
 
 ATOF is the source trace to use when losslessness matters. ATIF is the normalized
-trajectory to feed into viewers, validators, and eval tooling. To inspect ATIF
-visually, see [Viewing ATIF In Phoenix](phoenix.atif.md).
+trajectory to feed into viewers, validators, and eval tooling. The checked-in
+ATIF files were generated from Relay ATOF after the RELAY-169 correlation fix.
+To inspect ATIF visually, see [Viewing ATIF In Phoenix](phoenix.atif.md).
 
 ## Layout
 

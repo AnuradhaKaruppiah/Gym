@@ -23,8 +23,9 @@ viewers and validators.
 
 Both Hermes runs resolve the SWE-bench task with `reward=1.0`.
 
-Relay-enabled Hermes currently emits 35 ATOF events and a 27-step ATIF trajectory.
-Captured tool activity includes `search_files`, `read_file`, and `patch`.
+Relay-enabled Hermes currently emits 110 ATOF events and a 66-step ATIF
+trajectory. The ATIF has 21 same-step correlated tool observations and no
+standalone tool observation steps.
 
 The reconstructed baseline remains useful when debugging Gym response output,
 but the Relay ATOF/ATIF pair is the artifact shape to use for unified trajectory

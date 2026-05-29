@@ -26,9 +26,11 @@ session format.
 
 Both OpenClaw runs resolve the SWE-bench task with `reward=1.0`.
 
-Relay-enabled OpenClaw currently emits 31 ATOF events and a 21-step ATIF
+Relay-enabled OpenClaw currently emits 27 ATOF events and a 16-step ATIF
 trajectory. The checked-in run denies external web tools, so the trace stays
-focused on repository-local work.
+focused on repository-local work. The ATOF has the full 5 tool calls; the ATIF is
+valid but currently groups those tool results into one standalone observation
+step, which is the next OpenClaw-specific integration issue to inspect.
 
 The OpenClaw native session log is useful supporting context, but the Relay
 ATOF/ATIF pair is the unified artifact shape to carry into visualization,
