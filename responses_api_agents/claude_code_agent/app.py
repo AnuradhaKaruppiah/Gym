@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 from asyncio import Semaphore
@@ -26,7 +27,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from fastapi import Request
-from pydantic import ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from nemo_gym.base_resources_server import BaseRunRequest, BaseVerifyResponse
 from nemo_gym.base_responses_api_agent import (
@@ -50,6 +51,7 @@ from nemo_gym.openai_utils import (
 )
 from nemo_gym.server_utils import get_response_json, raise_for_status
 from responses_api_agents.claude_code_agent.setup_claude_code import ensure_claude_code
+from responses_api_agents.opencode_agent.app import OpenCodeAgent as _SWEBenchHelpers
 
 
 LOG = logging.getLogger(__name__)
@@ -203,13 +205,29 @@ def _extract_instruction(body_input) -> tuple[str, Optional[str]]:
     return user_message, system_message
 
 
+class ClaudeCodeNemoFlowConfig(BaseModel):
+    enabled: bool = False
+    command: str = "nemo-relay"
+    agent: str = "claude-code"
+    output_dir: Optional[str] = None
+    atof_filename: str = "claude-code.atof.jsonl"
+    atif_filename_template: str = "claude-code-{session_id}.atif.json"
+    agent_name: str = "claude-code"
+    mode: str = "overwrite"
+
+    @property
+    def command_parts(self) -> list[str]:
+        return shlex.split(self.command)
+
+
 class ClaudeCodeAgentConfig(BaseResponsesAPIAgentConfig):
-    resources_server: ResourcesServerRef
+    resources_server: Optional[ResourcesServerRef] = None
     # When model_server is set, ANTHROPIC_BASE_URL is resolved from the Gym model
     # server's URL (requires the server to expose POST /v1/messages. None is pushed yet).
     # When None, anthropic_base_url is used directly.
     model_server: Optional[ModelServerRef] = None
     concurrency: int = 32
+    command: str = "claude"
     model: str = "claude-sonnet-4-6"
     anthropic_api_key: str = ""  # pragma: allowlist secret
     anthropic_base_url: Optional[str] = None
@@ -221,6 +239,22 @@ class ClaudeCodeAgentConfig(BaseResponsesAPIAgentConfig):
     claude_code_version: Optional[str] = None
     thinking: Optional[str] = None
     max_thinking_tokens: Optional[int] = None
+    bare: bool = True
+    work_dir: Optional[str] = None
+    workspace_root: str = "outputs/claude_code_agent/workspaces"
+    container_formatter: Optional[str] = None
+    apptainer_command: str = "apptainer"
+    setup_timeout: int = 900
+    nemo_flow: ClaudeCodeNemoFlowConfig = Field(default_factory=ClaudeCodeNemoFlowConfig)
+    verify_swebench: bool = False
+    swebench_setup_dir: Optional[str] = None
+    swebench_results_root: str = "outputs/claude_code_agent/swebench-verifier"
+    swebench_verifier_timeout: int = 1200
+    swebench_model_name: str = "claude_code_agent"
+
+    @property
+    def command_parts(self) -> list[str]:
+        return shlex.split(self.command)
 
 
 class ClaudeCodeAgentRunRequest(BaseRunRequest):
@@ -233,7 +267,7 @@ class ClaudeCodeAgentVerifyResponse(BaseVerifyResponse):
     finished_naturally: bool = False
 
 
-class ClaudeCodeAgent(SimpleResponsesAPIAgent):
+class ClaudeCodeAgent(_SWEBenchHelpers, SimpleResponsesAPIAgent):
     config: ClaudeCodeAgentConfig
     sem: Semaphore = None
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -242,7 +276,8 @@ class ClaudeCodeAgent(SimpleResponsesAPIAgent):
         self.sem = Semaphore(self.config.concurrency)
         ensure_claude_code(self.config.claude_code_version)
         try:
-            ver = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=10).stdout.strip()
+            command = self.config.command_parts[0] if self.config.command_parts else "claude"
+            ver = subprocess.run([command, "--version"], capture_output=True, text=True, timeout=10).stdout.strip()
             LOG.warning("claude-code version: %s", ver or "(unknown)")
         except Exception as exc:
             LOG.warning("could not determine claude-code version: %s", exc)
@@ -256,8 +291,105 @@ class ClaudeCodeAgent(SimpleResponsesAPIAgent):
             return self.server_client._build_server_base_url(cfg)
         return self.config.anthropic_base_url or ""
 
-    async def _run_claude_code(self, instruction: str, system_prompt: Optional[str] = None) -> tuple[str, str]:
-        """Run claude -p --output-format=stream-json and return (stdout, model_name)."""
+    def _resolve_nemo_flow_output_dir(self, work_dir: Optional[str]) -> Optional[Path]:
+        if not self.config.nemo_flow.enabled:
+            return None
+
+        if work_dir:
+            run_name = Path(work_dir).parent.name
+        else:
+            run_name = f"claude_code_{uuid4().hex[:8]}"
+
+        if self.config.nemo_flow.output_dir:
+            output_root = Path(self.config.nemo_flow.output_dir).expanduser()
+            if not output_root.is_absolute():
+                output_root = Path.cwd() / output_root
+            output_dir = output_root / run_name
+        elif work_dir:
+            output_dir = Path(work_dir).parent / "nemo-relay"
+        else:
+            output_dir = Path(self.config.workspace_root).expanduser() / "nemo-relay" / run_name
+            if not output_dir.is_absolute():
+                output_dir = Path.cwd() / output_dir
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
+
+    def _nemo_flow_plugin_config(self, output_dir: Path) -> str:
+        relay = self.config.nemo_flow
+        return json.dumps(
+            {
+                "version": 1,
+                "components": [
+                    {
+                        "kind": "observability",
+                        "enabled": True,
+                        "config": {
+                            "version": 1,
+                            "atof": {
+                                "enabled": True,
+                                "output_directory": str(output_dir),
+                                "filename": relay.atof_filename,
+                                "mode": relay.mode,
+                            },
+                            "atif": {
+                                "enabled": True,
+                                "agent_name": relay.agent_name,
+                                "output_directory": str(output_dir),
+                                "filename_template": relay.atif_filename_template,
+                            },
+                            "opentelemetry": {"enabled": False},
+                            "openinference": {"enabled": False},
+                        },
+                    }
+                ],
+            }
+        )
+
+    def _nemo_flow_metadata(self, output_dir: Optional[Path]) -> dict[str, str]:
+        if not output_dir:
+            return {}
+
+        relay = self.config.nemo_flow
+        atif_glob = relay.atif_filename_template.replace("{session_id}", "*")
+        atif_paths = sorted(str(path) for path in output_dir.glob(atif_glob))
+        atof_path = output_dir / relay.atof_filename
+        return {
+            "nemo_relay_output_dir": str(output_dir),
+            "nemo_flow_output_dir": str(output_dir),
+            "nemo_relay_atof_path": str(atof_path) if atof_path.exists() else "",
+            "nemo_flow_atof_path": str(atof_path) if atof_path.exists() else "",
+            "nemo_relay_atif_paths": json.dumps(atif_paths),
+            "nemo_flow_atif_paths": json.dumps(atif_paths),
+        }
+
+    def _wrap_with_nemo_flow(self, cmd: list[str], output_dir: Optional[Path], base_url: str) -> list[str]:
+        if not output_dir:
+            return cmd
+
+        relay = self.config.nemo_flow
+        command_parts = self.config.command_parts
+        agent_args = cmd[len(command_parts) :] if command_parts and cmd[: len(command_parts)] == command_parts else cmd
+        wrapped = [
+            *relay.command_parts,
+            "run",
+            "--agent",
+            relay.agent,
+            "--plugin-config",
+            self._nemo_flow_plugin_config(output_dir),
+        ]
+        if base_url:
+            wrapped.extend(["--anthropic-base-url", base_url])
+        wrapped.extend(["--", *agent_args])
+        return wrapped
+
+    async def _run_claude_code(
+        self,
+        instruction: str,
+        system_prompt: Optional[str] = None,
+        work_dir: Optional[str] = None,
+    ) -> tuple[str, str, dict[str, str]]:
+        """Run claude -p --output-format=stream-json and return stdout plus artifact metadata."""
         base_url = self._resolve_base_url()
         # Keep full model name for local/custom endpoints; strip provider prefix for real Anthropic API.
         model = self.config.model if base_url else self.config.model.split("/")[-1]
@@ -278,6 +410,7 @@ class ClaudeCodeAgent(SimpleResponsesAPIAgent):
                 )
             )
 
+            relay_dir = self._resolve_nemo_flow_output_dir(work_dir)
             env = {
                 **os.environ,
                 "ANTHROPIC_API_KEY": api_key,  # pragma: allowlist secret
@@ -289,23 +422,26 @@ class ClaudeCodeAgent(SimpleResponsesAPIAgent):
                 "IS_SANDBOX": "1",
                 "CLAUDE_CONFIG_DIR": str(claude_config_dir),
             }
-            if base_url:
+            if base_url and not relay_dir:
                 env["ANTHROPIC_BASE_URL"] = base_url
                 env["ANTHROPIC_AUTH_TOKEN"] = api_key or "local"
 
             cmd = [
-                "claude",
+                *self.config.command_parts,
                 "-p",
                 "--output-format",
                 "stream-json",
                 "--verbose",
                 "--dangerously-skip-permissions",
-                "--bare",
                 "--max-turns",
                 str(self.config.max_turns),
                 "--model",
                 model,
             ]
+            if self.config.bare and not relay_dir:
+                cmd.append("--bare")
+            elif self.config.bare and relay_dir:
+                LOG.warning("Claude Code --bare disabled while nemo_flow is enabled so Relay hooks can load")
             if system_prompt:
                 cmd += ["--append-system-prompt", system_prompt]
             if self.config.allowed_tools:
@@ -317,9 +453,11 @@ class ClaudeCodeAgent(SimpleResponsesAPIAgent):
             if self.config.max_thinking_tokens is not None:
                 cmd += ["--max-thinking-tokens", str(self.config.max_thinking_tokens)]
             cmd += ["--", instruction]
+            cmd = self._wrap_with_nemo_flow(cmd, relay_dir, base_url)
 
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
+                cwd=work_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
@@ -330,13 +468,13 @@ class ClaudeCodeAgent(SimpleResponsesAPIAgent):
                 proc.kill()
                 await proc.communicate()
                 LOG.warning("claude-code timed out after %ds", self.config.timeout)
-                return "", model
+                return "", model, self._nemo_flow_metadata(relay_dir)
 
             if proc.returncode not in (0, None):
                 LOG.warning("claude-code exited %d: %s", proc.returncode, stderr.decode(errors="replace")[:500])
 
             LOG.debug("claude-code stdout (%d chars): %s", len(stdout), stdout[:2000].decode(errors="replace"))
-            return stdout.decode(errors="replace"), model
+            return stdout.decode(errors="replace"), model, self._nemo_flow_metadata(relay_dir)
         finally:
             shutil.rmtree(claude_config_dir, ignore_errors=True)
 
@@ -352,9 +490,16 @@ class ClaudeCodeAgent(SimpleResponsesAPIAgent):
         user_message, input_system = _extract_instruction(body.input)
         system_parts = [p for p in [self.config.system_prompt, input_system] if p]
         system_prompt = "\n\n".join(system_parts) if system_parts else None
+        metadata = getattr(body, "metadata", None) or {}
 
-        stdout, model_name = await self._run_claude_code(user_message, system_prompt=system_prompt)
+        work_dir = await self._materialize_swebench_workspace(metadata)
+        stdout, model_name, artifact_metadata = await self._run_claude_code(
+            user_message,
+            system_prompt=system_prompt,
+            work_dir=work_dir,
+        )
         output_items, usage = parse_stream_json(stdout)
+        patch = await self._collect_patch(work_dir)
 
         if not any(
             getattr(item, "type", None) == "message" and getattr(item, "role", None) == "assistant"
@@ -390,20 +535,28 @@ class ClaudeCodeAgent(SimpleResponsesAPIAgent):
                 output_tokens_details=NeMoGymResponseOutputTokensDetails(reasoning_tokens=0),
                 total_tokens=input_tokens + output_tokens,
             ),
+            metadata={
+                "work_dir": work_dir or "",
+                "patch": patch,
+                "patch_exists": str(bool(patch.strip())).lower(),
+                "instance_id": str(metadata.get("instance_id") or ""),
+            }
+            | artifact_metadata,
         )
 
     async def run(self, request: Request, body: ClaudeCodeAgentRunRequest) -> ClaudeCodeAgentVerifyResponse:
         async with self.sem:
             cookies = request.cookies
 
-            seed_resp = await self.server_client.post(
-                server_name=self.config.resources_server.name,
-                url_path="/seed_session",
-                json=body.model_dump(),
-                cookies=cookies,
-            )
-            await raise_for_status(seed_resp)
-            cookies = seed_resp.cookies
+            if self.config.resources_server:
+                seed_resp = await self.server_client.post(
+                    server_name=self.config.resources_server.name,
+                    url_path="/seed_session",
+                    json=body.model_dump(),
+                    cookies=cookies,
+                )
+                await raise_for_status(seed_resp)
+                cookies = seed_resp.cookies
 
             agent_resp = await self.server_client.post(
                 server_name=self.config.name,
@@ -415,15 +568,6 @@ class ClaudeCodeAgent(SimpleResponsesAPIAgent):
             cookies = agent_resp.cookies
             agent_resp_json = await get_response_json(agent_resp)
 
-            verify_resp = await self.server_client.post(
-                server_name=self.config.resources_server.name,
-                url_path="/verify",
-                json=body.model_dump() | {"response": agent_resp_json},
-                cookies=cookies,
-            )
-            await raise_for_status(verify_resp)
-            verify_json = await get_response_json(verify_resp)
-
             gym_resp = NeMoGymResponse.model_validate(agent_resp_json)
             turns = sum(
                 1
@@ -432,6 +576,43 @@ class ClaudeCodeAgent(SimpleResponsesAPIAgent):
             )
             last = gym_resp.output[-1] if gym_resp.output else None
             naturally = getattr(last, "type", None) == "message" and getattr(last, "role", None) == "assistant"
+
+            if not self.config.resources_server:
+                reward = 0.0
+                verify_fields: dict[str, Any] = {}
+                metadata = body.responses_create_params.metadata or {}
+                response_metadata = gym_resp.metadata or {}
+                if self.config.verify_swebench:
+                    try:
+                        verify_fields = await self._verify_swebench_patch(
+                            dict(metadata),
+                            str(response_metadata.get("patch") or ""),
+                        )
+                        reward = 1.0 if verify_fields.get("swebench_resolved") else 0.0
+                    except Exception as exc:
+                        LOG.exception("SWE-bench verification failed")
+                        verify_fields = {
+                            "swebench_resolved": False,
+                            "swebench_error": str(exc),
+                        }
+
+                return ClaudeCodeAgentVerifyResponse(
+                    responses_create_params=body.responses_create_params,
+                    response=gym_resp,
+                    reward=reward,
+                    turns_used=turns,
+                    finished_naturally=naturally,
+                    **verify_fields,
+                )
+
+            verify_resp = await self.server_client.post(
+                server_name=self.config.resources_server.name,
+                url_path="/verify",
+                json=body.model_dump() | {"response": agent_resp_json},
+                cookies=cookies,
+            )
+            await raise_for_status(verify_resp)
+            verify_json = await get_response_json(verify_resp)
 
             return ClaudeCodeAgentVerifyResponse.model_validate(
                 verify_json | {"turns_used": turns, "finished_naturally": naturally}

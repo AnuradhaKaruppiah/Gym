@@ -27,6 +27,7 @@ consistent observability layer across them.
 | OpenClaw | Optional NeMoFlow plugin loaded by the OpenClaw harness | [openclaw/](openclaw/) |
 | OpenCode | Optional NeMoFlow plugin inside the OpenCode runtime | [opencode/](opencode/) |
 | Codex | Optional Python NeMoRelay exporters around `codex exec --json` in the Gym wrapper | [codex/](codex/) |
+| Claude Code | Optional NeMoFlow wrapper around the Claude Code CLI in the Gym wrapper | [claude-code/](claude-code/) |
 
 ATOF is the source trace to use when losslessness matters. ATIF is the normalized
 trajectory to feed into viewers, validators, and eval tooling. The checked-in

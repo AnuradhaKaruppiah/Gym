@@ -1,0 +1,44 @@
+{
+  "task": "django__django-13741",
+  "agent": "claude-code",
+  "with_relay": {
+    "source_rollout": ".tmp/nemo-gym/claude-code-relay-verify-20260529/claude_code_django_13741_relay_verified_rollout.jsonl",
+    "atif_path": "artifacts/with-relay.nemo-relay.atif.json",
+    "atof_path": "artifacts/with-relay.nemo-relay.atof.jsonl",
+    "swebench_report_path": "artifacts/with-relay.swebench-report.json",
+    "schema_version": "ATIF-v1.7",
+    "step_count": 12,
+    "step_sources": {
+      "agent": 6,
+      "user": 6
+    },
+    "atof_event_count": 320,
+    "atof_event_categories": {
+      "agent": 2,
+      "llm": 12,
+      "tool": 8
+    },
+    "atof_mark_counts": {
+      "llm.chunk": 298
+    },
+    "tool_call_count": 4,
+    "tool_call_names": {
+      "Edit": 1,
+      "Grep": 2,
+      "Read": 1
+    },
+    "tool_observation_results": 4,
+    "same_step_correlated_results": 4,
+    "standalone_observation_steps": 0,
+    "reward": 1.0,
+    "turns_used": 1,
+    "finished_naturally": true,
+    "swebench_resolved": true,
+    "phoenix_project": "atif-gym-claude-relay",
+    "note": "Gym launches Claude Code through the NeMoFlow wrapper so Relay emits lossless ATOF plus a normalized ATIF with inline tool observations."
+  },
+  "secondary_artifacts": {
+    "gym_rollout": "artifacts/with-relay.gym-rollout.jsonl",
+    "swebench_report": "artifacts/with-relay.swebench-report.json"
+  }
+}
