@@ -1,15 +1,14 @@
 # Codex Relay Artifacts
 
-Codex runs `django__django-13741` through the Gym Codex wrapper with optional
-Python NeMoRelay exporters around `codex exec --json`. The Relay artifacts are
-the primary output: ATOF preserves the raw Codex event stream, and ATIF gives the
-normalized trajectory currently projected from those events.
+Codex runs `django__django-13741` through Gym with native NeMo Relay hook
+capture. Gym launches the Codex CLI, Relay wraps it with
+`nemo-relay run --agent codex`, and Relay writes the primary artifacts.
 
 ## Primary Files
 
 - `artifacts/with-relay.nemo-relay.atof.jsonl`: lossless Relay event stream.
 - `artifacts/with-relay.nemo-relay.atif.json`: Relay-projected ATIF trajectory.
-- `artifacts/summary.json`: compact run metadata and counts.
+- `artifacts/summary.json`: compact run metadata and event counts.
 
 ## Secondary Context
 
@@ -19,30 +18,21 @@ normalized trajectory currently projected from those events.
 
 ## Relay Settings
 
-NeMo Relay's Codex documentation recommends the transparent CLI wrapper
-(`nemo-relay run -- codex`) for local Codex sessions. That path requires
-`codex-cli >= 0.129.0`, enables Codex hooks with `features.hooks = true`,
-injects hook forwarding, and routes model traffic through the Relay gateway.
+Relay mode uses the Codex hook integration, not Gym's `codex exec --json`
+stdout. The wrapper starts top-level Codex in a PTY with the SWE task as the
+prompt, enables Codex hooks, and routes model traffic through the Relay gateway.
 
-This Gym POC uses a direct adapter path instead: `nemo_relay.enabled=true`
-registers Python ATOF/ATIF exporters in the Gym Codex agent and records the
-`codex exec --json` stream into Relay. That keeps the run self-contained inside
-Gym while preserving Codex-native `command_execution` and `file_change` records
-in ATOF. It does not depend on Codex hook support or the Relay gateway provider
-alias.
-
-OpenInference export is an optional sibling view. Leave
-`nemo_relay.openinference.enabled=false` for file-only ATOF/ATIF capture, or
-enable it with an OTLP endpoint such as Phoenix when live span telemetry is
-useful.
+For this capture, `OPENAI_API_KEY` was unset when starting Gym so Relay could
+forward Codex's normal login auth instead of substituting the API-key route.
+That produced a full trajectory with model activity, Bash calls, and
+`apply_patch` calls.
 
 ## Snapshot
 
-The Relay-enabled Codex run produced a patch for the SWE-bench task and finished
-naturally. SWE-bench verification was disabled for this capture, so the checked
-in rollout has `reward=0.0`.
+The Relay-enabled Codex run produced a Django patch, ran the targeted auth form
+tests, and finished naturally. SWE-bench verification was disabled for artifact
+capture, so the Gym rollout reward remains `0.0`.
 
-The ATOF file has 218 events, including 184 raw Codex JSON marks, 78 completed
-command executions, and 4 completed file changes. The current ATIF projection is
-32 user/agent steps. Codex command and file-change records are preserved in ATOF,
-but they are not yet projected as ATIF tool steps.
+The checked-in ATOF has 6,847 events, including 114 Bash tool events and 8
+`apply_patch` tool events. The ATIF projection has 63 steps with tool calls and
+observations suitable for Phoenix visualization.

@@ -27,14 +27,17 @@ codex_agent:
       extra_args: []
       nemo_relay:
         enabled: false
-        python_path: null
+        command: nemo-relay
+        bypass_hook_trust: false
+        interactive_prompt_delay: 5.0
+        interactive_startup_timeout: 60.0
+        interactive_shutdown_timeout: 10.0
         output_dir: null
         atof_filename: codex.atof.jsonl
         atif_filename_template: codex-{session_id}.atif.json
         agent_name: codex
         agent_version: 0.1.0
         mode: overwrite
-        include_raw_events: true
         openinference:
           enabled: false
           endpoint: null

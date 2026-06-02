@@ -22,3 +22,8 @@ It does not force a model, so Codex can use the local account/profile default.
 Provider and model settings should come from the local Codex config/profile or
 from `model`, `openai_api_key`, `openai_base_url`, and `config_overrides` in
 `configs/codex_agent.yaml`.
+
+When `nemo_relay.enabled=true`, the agent uses Relay's native Codex hook path
+instead of `codex exec --json`: Gym launches top-level Codex in a PTY and wraps
+it with `nemo-relay run --agent codex`. This produces Relay ATOF/ATIF artifacts
+with model, shell, and patch events while preserving Gym rollout metadata.

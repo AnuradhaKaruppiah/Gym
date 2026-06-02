@@ -19,7 +19,7 @@ import logging
 import os
 import shlex
 import shutil
-import sys
+import subprocess
 from asyncio import Semaphore
 from pathlib import Path
 from time import time
@@ -53,6 +53,8 @@ from nemo_gym.server_utils import get_response_json, raise_for_status
 
 
 LOG = logging.getLogger(__name__)
+MIN_CODEX_RELAY_VERSION = (0, 129, 0)
+MIN_CODEX_HOOK_TRUST_BYPASS_VERSION = (0, 136, 0)
 
 
 def _content_to_text(content: Any) -> str:
@@ -72,6 +74,23 @@ def _content_to_text(content: Any) -> str:
     if hasattr(content, "content"):
         return _content_to_text(getattr(content, "content"))
     return str(content or "")
+
+
+def _toml_string(value: str) -> str:
+    # JSON string syntax is valid TOML basic string syntax for the paths/commands used here.
+    return json.dumps(value)
+
+
+def _parse_codex_version(output: str) -> Optional[tuple[int, int, int]]:
+    for token in output.replace("\n", " ").split():
+        parts = token.split(".")
+        if len(parts) >= 3 and all(part.isdigit() for part in parts[:3]):
+            return tuple(int(part) for part in parts[:3])
+    return None
+
+
+def _format_version(version: tuple[int, int, int]) -> str:
+    return ".".join(str(part) for part in version)
 
 
 def _extract_instruction(body_input: Any) -> tuple[str, Optional[str]]:
@@ -235,22 +254,6 @@ def parse_codex_jsonl(stdout: str) -> tuple[list[Any], dict[str, int]]:
     return output_items, {"input_tokens": input_tokens, "output_tokens": output_tokens}
 
 
-def _iter_codex_json_events(stdout: str):
-    for line_no, raw_line in enumerate(stdout.splitlines(), start=1):
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            yield line_no, {"type": "unparsed", "raw": raw_line}
-            continue
-        if isinstance(event, dict):
-            yield line_no, event
-        else:
-            yield line_no, {"type": "non_object", "value": event}
-
-
 class CodexOpenInferenceConfig(BaseModel):
     enabled: bool = False
     endpoint: Optional[str] = None
@@ -267,285 +270,18 @@ class CodexOpenInferenceConfig(BaseModel):
 
 class CodexNemoRelayConfig(BaseModel):
     enabled: bool = False
-    python_path: Optional[str] = None
+    command: str = "nemo-relay"
+    bypass_hook_trust: bool = False
+    interactive_prompt_delay: float = 5.0
+    interactive_startup_timeout: float = 60.0
+    interactive_shutdown_timeout: float = 10.0
     output_dir: Optional[str] = None
     atof_filename: str = "codex.atof.jsonl"
     atif_filename_template: str = "codex-{session_id}.atif.json"
     agent_name: str = "codex"
     agent_version: str = "0.1.0"
     mode: str = "overwrite"
-    include_raw_events: bool = True
     openinference: CodexOpenInferenceConfig = Field(default_factory=CodexOpenInferenceConfig)
-
-
-def _json_arguments(value: Any) -> Any:
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return {"raw": value}
-    if value is None:
-        return {}
-    return value
-
-
-def _model_output_type(item: Any) -> str:
-    return str(getattr(item, "type", "") or "")
-
-
-def _message_text(item: Any) -> str:
-    return _content_to_text(getattr(item, "content", None))
-
-
-class _CodexNemoRelayCapture:
-    def __init__(
-        self,
-        *,
-        relay_dir: Path,
-        config: CodexNemoRelayConfig,
-        model_name: str,
-        input_text: str,
-        metadata: dict[str, Any],
-    ) -> None:
-        if config.python_path:
-            python_path = str(Path(config.python_path).expanduser().resolve())
-            if python_path not in sys.path:
-                sys.path.insert(0, python_path)
-
-        try:
-            from nemo_relay import (  # noqa: PLC0415
-                AtifExporter,
-                AtofExporter,
-                AtofExporterConfig,
-                AtofExporterMode,
-                LLMRequest,
-                OpenInferenceConfig,
-                OpenInferenceSubscriber,
-                ScopeType,
-                llm,
-                scope,
-                subscribers,
-                tools,
-            )
-        except ImportError:
-            from nemo_flow import (  # type: ignore[no-redef]  # noqa: PLC0415
-                AtifExporter,
-                AtofExporter,
-                AtofExporterConfig,
-                AtofExporterMode,
-                LLMRequest,
-                OpenInferenceConfig,
-                OpenInferenceSubscriber,
-                ScopeType,
-                llm,
-                scope,
-                subscribers,
-                tools,
-            )
-
-        self._llm = llm
-        self._scope = scope
-        self._subscribers = subscribers
-        self._tools = tools
-        self._LLMRequest = LLMRequest
-        self.relay_dir = relay_dir
-        self.config = config
-        self.model_name = model_name
-        self.input_text = input_text
-        self.session_id = f"codex-{uuid4().hex[:8]}"
-        self.atof_path = relay_dir / config.atof_filename
-        self.atif_path = relay_dir / config.atif_filename_template.format(session_id=self.session_id)
-        self._tool_handles: dict[str, Any] = {}
-        self._openinference = None
-        self._openinference_subscriber: Optional[str] = None
-
-        atof_config = AtofExporterConfig()
-        atof_config.output_directory = str(relay_dir)
-        atof_config.filename = config.atof_filename
-        atof_config.mode = AtofExporterMode.Overwrite if config.mode == "overwrite" else AtofExporterMode.Append
-        self._atof_exporter = AtofExporter(atof_config)
-        self._atof_subscriber = f"codex_atof_{uuid4().hex}"
-        self._atof_exporter.register(self._atof_subscriber)
-
-        self._atif_exporter = AtifExporter(
-            self.session_id,
-            config.agent_name,
-            config.agent_version,
-            model_name=model_name,
-            extra={
-                "gym_agent": "codex_agent",
-                "instance_id": str(metadata.get("instance_id") or ""),
-            },
-        )
-        self._atif_subscriber = f"codex_atif_{uuid4().hex}"
-        self._atif_exporter.register(self._atif_subscriber)
-        self._register_openinference(OpenInferenceConfig, OpenInferenceSubscriber)
-
-        self._agent_handle = scope.push(
-            config.agent_name,
-            ScopeType.Agent,
-            input={
-                "prompt": input_text,
-                "metadata": {
-                    "instance_id": str(metadata.get("instance_id") or ""),
-                    "dataset_name": str(metadata.get("dataset_name") or ""),
-                },
-            },
-        )
-
-    def _register_openinference(self, OpenInferenceConfig: Any, OpenInferenceSubscriber: Any) -> None:
-        config = self.config.openinference
-        if not config.enabled:
-            return
-
-        oi_config = OpenInferenceConfig()
-        oi_config.transport = config.transport
-        oi_config.endpoint = config.endpoint
-        oi_config.service_name = config.service_name
-        oi_config.service_namespace = config.service_namespace
-        oi_config.service_version = config.service_version
-        oi_config.instrumentation_scope = config.instrumentation_scope
-        oi_config.timeout_millis = config.timeout_millis
-        oi_config.headers = dict(config.headers)
-        oi_config.resource_attributes = dict(config.resource_attributes)
-        if config.project_name:
-            oi_config.set_header("x-project-name", config.project_name)
-
-        self._openinference = OpenInferenceSubscriber(oi_config)
-        self._openinference_subscriber = f"codex_openinference_{uuid4().hex}"
-        self._openinference.register(self._openinference_subscriber)
-
-    def record_raw_events(self, stdout: str) -> None:
-        if not self.config.include_raw_events:
-            return
-        for line_no, event in _iter_codex_json_events(stdout):
-            self._scope.event(
-                "llm.chunk",
-                handle=self._agent_handle,
-                data={
-                    "provider": "codex",
-                    "line": line_no,
-                    "event": event,
-                },
-                metadata={"hook_event_name": "codex.json_event"},
-            )
-
-    def _llm_call_end(self, messages: list[dict[str, Any]], response: dict[str, Any], index: int) -> None:
-        request = self._LLMRequest(
-            {},
-            {
-                "messages": messages,
-                "model": self.model_name,
-                "codex_projection_index": index,
-            },
-        )
-        handle = self._llm.call(
-            "codex_assistant_message",
-            request,
-            handle=self._agent_handle,
-            model_name=self.model_name,
-            metadata={"projection": True},
-        )
-        self._llm.call_end(handle, response)
-
-    def project_output_items(self, output_items: list[Any]) -> None:
-        messages: list[dict[str, Any]] = [{"role": "user", "content": self.input_text}]
-        projection_index = 0
-        for item in output_items:
-            item_type = _model_output_type(item)
-            if item_type == "message":
-                text = _message_text(item)
-                response = {
-                    "role": "assistant",
-                    "content": text,
-                    "codex_output_type": item_type,
-                }
-                self._llm_call_end(list(messages), response, projection_index)
-                messages.append({"role": "assistant", "content": text})
-                projection_index += 1
-            elif item_type == "function_call":
-                call_id = str(getattr(item, "call_id", None) or getattr(item, "id", None) or f"call-{uuid4().hex[:8]}")
-                name = str(getattr(item, "name", "") or "")
-                arguments = _json_arguments(getattr(item, "arguments", None))
-                response = {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
-                        {
-                            "id": call_id,
-                            "type": "function",
-                            "function": {
-                                "name": name,
-                                "arguments": arguments,
-                            },
-                        }
-                    ],
-                }
-                self._llm_call_end(list(messages), response, projection_index)
-                messages.append({"role": "assistant", "content": "", "tool_calls": response["tool_calls"]})
-                self._tool_handles[call_id] = self._tools.call(
-                    name,
-                    arguments,
-                    handle=self._agent_handle,
-                    tool_call_id=call_id,
-                )
-                projection_index += 1
-            elif item_type == "function_call_output":
-                call_id = str(getattr(item, "call_id", None) or f"call-{uuid4().hex[:8]}")
-                output = _content_to_text(getattr(item, "output", None))
-                handle = self._tool_handles.pop(call_id, None)
-                if handle is None:
-                    handle = self._tools.call(
-                        "unknown",
-                        {},
-                        handle=self._agent_handle,
-                        tool_call_id=call_id,
-                    )
-                self._tools.call_end(handle, output)
-                messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
-
-    def close(
-        self,
-        *,
-        stdout: str,
-        output_items: list[Any],
-        output: dict[str, Any],
-    ) -> dict[str, str]:
-        self.record_raw_events(stdout)
-        self.project_output_items(output_items)
-        for handle in list(self._tool_handles.values()):
-            self._tools.call_end(handle, {"status": "unclosed"})
-        self._tool_handles.clear()
-
-        self._scope.pop(self._agent_handle, output=output)
-        self.atif_path.write_text(self._atif_exporter.export_json())
-        self._atif_exporter.deregister(self._atif_subscriber)
-        self._atof_exporter.deregister(self._atof_subscriber)
-        if self._openinference and self._openinference_subscriber:
-            self._openinference.deregister(self._openinference_subscriber)
-            self._openinference.force_flush()
-            self._openinference.shutdown()
-            self._subscribers.deregister(self._openinference_subscriber)
-        self._atof_exporter.force_flush()
-        self._atof_exporter.shutdown()
-        self._subscribers.deregister(self._atof_subscriber)
-        self._subscribers.deregister(self._atif_subscriber)
-
-        metadata = {
-            "nemo_relay_output_dir": str(self.relay_dir),
-            "nemo_relay_atof_path": str(self.atof_path) if self.atof_path.exists() else "",
-            "nemo_relay_atif_path": str(self.atif_path) if self.atif_path.exists() else "",
-            "nemo_relay_atif_paths": json.dumps([str(self.atif_path)] if self.atif_path.exists() else []),
-        }
-        if self.config.openinference.enabled:
-            metadata.update(
-                {
-                    "nemo_relay_openinference_enabled": "true",
-                    "nemo_relay_openinference_endpoint": self.config.openinference.endpoint or "",
-                    "nemo_relay_openinference_project": self.config.openinference.project_name or "",
-                }
-            )
-        return metadata
 
 
 class CodexAgentConfig(BaseResponsesAPIAgentConfig):
@@ -604,6 +340,43 @@ class CodexAgent(SimpleResponsesAPIAgent):
         command = self.config.command_parts[0] if self.config.command_parts else ""
         if not command or shutil.which(command) is None:
             LOG.warning("Codex command %r is not on PATH yet", self.config.command)
+        relay_command = shlex.split(self.config.nemo_relay.command)[0] if self.config.nemo_relay.command else ""
+        if self.config.nemo_relay.enabled and not (relay_command and (shutil.which(relay_command) or Path(relay_command).exists())):
+            LOG.warning("NeMo Relay command %r is not available yet", self.config.nemo_relay.command)
+        if self.config.nemo_relay.enabled:
+            self._warn_if_codex_relay_unsupported()
+
+    def _warn_if_codex_relay_unsupported(self) -> None:
+        try:
+            proc = subprocess.run(
+                [*self.config.command_parts, "--version"],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=5,
+            )
+        except Exception as exc:
+            LOG.warning("Could not check Codex version for NeMo Relay hook support: %s", exc)
+            return
+        version = _parse_codex_version(f"{proc.stdout} {proc.stderr}")
+        if version and version < MIN_CODEX_RELAY_VERSION:
+            LOG.warning(
+                "Codex %s is older than the NeMo Relay hook-capture minimum %s; "
+                "Relay may produce empty ATOF/ATIF artifacts.",
+                _format_version(version),
+                _format_version(MIN_CODEX_RELAY_VERSION),
+            )
+        if (
+            version
+            and self.config.nemo_relay.bypass_hook_trust
+            and version < MIN_CODEX_HOOK_TRUST_BYPASS_VERSION
+        ):
+            LOG.warning(
+                "Codex %s is older than the hook-trust bypass minimum %s; "
+                "disable nemo_relay.bypass_hook_trust or use a newer Codex CLI.",
+                _format_version(version),
+                _format_version(MIN_CODEX_HOOK_TRUST_BYPASS_VERSION),
+            )
 
     def _resolve_model_base_url(self) -> Optional[str]:
         if self.config.model_server:
@@ -828,6 +601,159 @@ class CodexAgent(SimpleResponsesAPIAgent):
         relay_dir.mkdir(parents=True, exist_ok=True)
         return relay_dir
 
+    def _build_nemo_relay_plugin_config(
+        self,
+        *,
+        relay_dir: Path,
+        model_name: str,
+        metadata: dict[str, Any],
+    ) -> str:
+        config = self.config.nemo_relay
+        headers = dict(config.openinference.headers)
+        if config.openinference.project_name:
+            headers["x-project-name"] = config.openinference.project_name
+
+        observability: dict[str, Any] = {
+            "atof": {
+                "enabled": True,
+                "output_directory": str(relay_dir),
+                "filename": config.atof_filename,
+                "mode": config.mode,
+            },
+            "atif": {
+                "enabled": True,
+                "agent_name": config.agent_name,
+                "agent_version": config.agent_version,
+                "model_name": model_name,
+                "output_directory": str(relay_dir),
+                "filename_template": config.atif_filename_template,
+                "extra": {
+                    "gym_agent": "codex_agent",
+                    "instance_id": str(metadata.get("instance_id") or ""),
+                    "dataset_name": str(metadata.get("dataset_name") or ""),
+                },
+            },
+        }
+
+        if config.openinference.enabled:
+            observability["openinference"] = {
+                "enabled": True,
+                "transport": config.openinference.transport,
+                "endpoint": config.openinference.endpoint,
+                "headers": headers,
+                "resource_attributes": config.openinference.resource_attributes,
+                "service_name": config.openinference.service_name,
+                "service_namespace": config.openinference.service_namespace,
+                "service_version": config.openinference.service_version,
+                "instrumentation_scope": config.openinference.instrumentation_scope,
+                "timeout_millis": config.openinference.timeout_millis,
+            }
+
+        return json.dumps(
+            {
+                "version": 1,
+                "components": [
+                    {
+                        "kind": "observability",
+                        "enabled": True,
+                        "config": observability,
+                    }
+                ],
+            }
+        )
+
+    def _write_nemo_relay_run_config(self, relay_dir: Path) -> Path:
+        config_path = relay_dir / "nemo-relay.config.toml"
+        config_path.write_text(
+            "[agents.codex]\n"
+            f"command = {_toml_string(self.config.command)}\n",
+            encoding="utf-8",
+        )
+        return config_path
+
+    def _build_nemo_relay_command(
+        self,
+        *,
+        codex_cmd: list[str],
+        relay_dir: Path,
+        model_name: str,
+        metadata: dict[str, Any],
+        base_url: Optional[str],
+    ) -> list[str]:
+        relay_config_path = self._write_nemo_relay_run_config(relay_dir)
+        codex_args = codex_cmd[len(self.config.command_parts) :]
+        cmd = [
+            *shlex.split(self.config.nemo_relay.command),
+            "run",
+            "--agent",
+            "codex",
+            "--config",
+            str(relay_config_path),
+        ]
+        if base_url:
+            cmd.extend(["--openai-base-url", base_url])
+        cmd.extend(
+            [
+                "--plugin-config",
+                self._build_nemo_relay_plugin_config(
+                    relay_dir=relay_dir,
+                    model_name=model_name,
+                    metadata=metadata,
+                ),
+                "--",
+                *codex_args,
+            ]
+        )
+        return cmd
+
+    def _collect_nemo_relay_metadata(self, relay_dir: Path) -> dict[str, str]:
+        config = self.config.nemo_relay
+        atif_pattern = config.atif_filename_template.replace("{session_id}", "*")
+        atif_paths = sorted(str(path) for path in relay_dir.glob(atif_pattern))
+        atof_path = relay_dir / config.atof_filename
+        metadata = {
+            "nemo_relay_output_dir": str(relay_dir),
+            "nemo_relay_atof_path": str(atof_path) if atof_path.exists() else "",
+            "nemo_relay_atif_path": atif_paths[0] if atif_paths else "",
+            "nemo_relay_atif_paths": json.dumps(atif_paths),
+        }
+        pty_log_path = relay_dir / "codex.pty.log"
+        if pty_log_path.exists():
+            metadata["nemo_relay_pty_log_path"] = str(pty_log_path)
+        if atof_path.exists() and atof_path.stat().st_size == 0:
+            metadata["nemo_relay_warning"] = (
+                "ATOF was created but empty. For Codex, confirm codex-cli >= "
+                f"{_format_version(MIN_CODEX_RELAY_VERSION)} and that Codex hooks are active."
+            )
+        if config.openinference.enabled:
+            metadata.update(
+                {
+                    "nemo_relay_openinference_enabled": "true",
+                    "nemo_relay_openinference_endpoint": config.openinference.endpoint or "",
+                    "nemo_relay_openinference_project": config.openinference.project_name or "",
+                }
+            )
+        return metadata
+
+    def _atof_has_turn_end(self, relay_dir: Path) -> bool:
+        atof_path = relay_dir / self.config.nemo_relay.atof_filename
+        if not atof_path.exists() or atof_path.stat().st_size == 0:
+            return False
+        try:
+            for raw_line in reversed(atof_path.read_text(encoding="utf-8").splitlines()):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("name") == "codex-turn" and event.get("scope_category") == "end":
+                    return True
+        except OSError:
+            return False
+        return False
+
     def _build_codex_command(self, prompt: str, work_dir: Optional[str]) -> list[str]:
         cmd = [
             *self.config.command_parts,
@@ -852,28 +778,45 @@ class CodexAgent(SimpleResponsesAPIAgent):
             cmd.append("--ignore-rules")
         if self.config.skip_git_repo_check:
             cmd.append("--skip-git-repo-check")
+        if self.config.nemo_relay.enabled and self.config.nemo_relay.bypass_hook_trust:
+            cmd.append("--dangerously-bypass-hook-trust")
         for override in self.config.config_overrides:
             cmd.extend(["--config", override])
         cmd.extend(self.config.extra_args)
         cmd.extend(["--", prompt])
         return cmd
 
-    async def _run_codex(
-        self, instruction: str, system_prompt: Optional[str], work_dir: Optional[str]
-    ) -> tuple[str, str, str, int | None]:
-        prompt = instruction
-        if system_prompt:
-            prompt = f"{system_prompt}\n\n{instruction}"
+    def _build_codex_interactive_command(self, work_dir: Optional[str], prompt: Optional[str] = None) -> list[str]:
+        cmd = [
+            *self.config.command_parts,
+            "--sandbox",
+            self.config.sandbox,
+        ]
+        if self.config.approval_policy:
+            cmd.extend(["--ask-for-approval", self.config.approval_policy])
+        if self.config.model:
+            cmd.extend(["--model", self.config.model])
+        if self.config.profile:
+            cmd.extend(["--profile", self.config.profile])
+        if work_dir:
+            cmd.extend(["--cd", work_dir])
+        if self.config.nemo_relay.bypass_hook_trust:
+            cmd.append("--dangerously-bypass-hook-trust")
+        for override in self.config.config_overrides:
+            cmd.extend(["--config", override])
+        cmd.extend(self.config.extra_args)
+        if "--no-alt-screen" not in cmd:
+            cmd.append("--no-alt-screen")
+        if prompt:
+            cmd.extend(["--", prompt])
+        return cmd
 
-        cmd = self._build_codex_command(prompt, work_dir)
-
-        env = {**os.environ}
-        base_url = self._resolve_model_base_url()
-        if base_url:
-            env["OPENAI_BASE_URL"] = base_url
-        if self.config.openai_api_key:
-            env["OPENAI_API_KEY"] = self.config.openai_api_key
-
+    async def _run_codex_exec_command(
+        self,
+        *,
+        cmd: list[str],
+        env: dict[str, str],
+    ) -> tuple[str, str, int | None]:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -886,16 +829,186 @@ class CodexAgent(SimpleResponsesAPIAgent):
             proc.kill()
             await proc.communicate()
             LOG.warning("codex timed out after %ds", self.config.timeout)
-            return "", self.config.model or "codex-default", "timeout", None
+            return "", "timeout", None
 
         if proc.returncode not in (0, None):
             LOG.warning("codex exited %d: %s", proc.returncode, stderr.decode(errors="replace")[:2000])
 
+        return stdout.decode(errors="replace"), stderr.decode(errors="replace"), proc.returncode
+
+    async def _run_codex_relay_pty(
+        self,
+        *,
+        cmd: list[str],
+        prompt: Optional[str],
+        env: dict[str, str],
+        relay_dir: Path,
+    ) -> tuple[str, str, int | None]:
+        master_fd, slave_fd = os.openpty()
+        os.set_blocking(master_fd, False)
+        chunks: list[bytes] = []
+        pty_log_path = relay_dir / "codex.pty.log"
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=env,
+        )
+        os.close(slave_fd)
+
+        async def drain_pty() -> None:
+            while True:
+                try:
+                    chunk = os.read(master_fd, 4096)
+                except BlockingIOError:
+                    if proc.returncode is not None:
+                        break
+                    await asyncio.sleep(0.1)
+                    continue
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                with pty_log_path.open("ab") as pty_log:
+                    pty_log.write(chunk)
+
+        reader_task = asyncio.create_task(drain_pty())
+        status = "relay_turn_completed"
+        deadline = asyncio.get_running_loop().time() + self.config.timeout
+        try:
+            startup_deadline = (
+                asyncio.get_running_loop().time()
+                + self.config.nemo_relay.interactive_startup_timeout
+            )
+            while asyncio.get_running_loop().time() < startup_deadline:
+                terminal_text = b"".join(chunks).decode(errors="replace")
+                if "Do you trust" in terminal_text or "Press enter to continue" in terminal_text:
+                    os.write(master_fd, b"\r")
+                    await asyncio.sleep(0.5)
+                    break
+                if self._atof_has_turn_end(relay_dir) or proc.returncode is not None:
+                    break
+                if "›" in terminal_text and prompt is None:
+                    break
+                await asyncio.sleep(0.2)
+
+            if prompt:
+                await asyncio.sleep(self.config.nemo_relay.interactive_prompt_delay)
+                if proc.returncode is not None:
+                    status = "process_exited"
+                else:
+                    while asyncio.get_running_loop().time() < startup_deadline:
+                        terminal_text = b"".join(chunks).decode(errors="replace")
+                        if "Continue anyway?" in terminal_text:
+                            os.write(master_fd, b"y\r")
+                        if "›" in terminal_text:
+                            break
+                        if proc.returncode is not None:
+                            status = "process_exited"
+                            break
+                        await asyncio.sleep(0.2)
+                    try:
+                        if proc.returncode is None:
+                            os.write(master_fd, b"\x1b[200~" + prompt.encode("utf-8") + b"\x1b[201~\r")
+                            await asyncio.sleep(0.2)
+                            os.write(master_fd, b"\n")
+                    except OSError:
+                        status = "prompt_write_failed"
+            while True:
+                if self._atof_has_turn_end(relay_dir):
+                    break
+                terminal_text = b"".join(chunks).decode(errors="replace")
+                if "Quota exceeded" in terminal_text:
+                    status = "quota_exceeded"
+                    break
+                if proc.returncode is not None:
+                    status = "process_exited"
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    status = "timeout"
+                    LOG.warning("codex relay turn timed out after %ds", self.config.timeout)
+                    break
+                await asyncio.sleep(0.5)
+        finally:
+            if proc.returncode is None:
+                try:
+                    os.write(master_fd, b"\x03")
+                except OSError:
+                    pass
+                try:
+                    await asyncio.wait_for(
+                        proc.wait(),
+                        timeout=self.config.nemo_relay.interactive_shutdown_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                    status = f"{status}; forced_shutdown"
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+            await asyncio.gather(reader_task, return_exceptions=True)
+
+        return b"".join(chunks).decode(errors="replace"), status, proc.returncode
+
+    async def _run_codex(
+        self,
+        instruction: str,
+        system_prompt: Optional[str],
+        work_dir: Optional[str],
+        relay_dir: Optional[Path],
+        metadata: dict[str, Any],
+    ) -> tuple[str, str, str, int | None]:
+        prompt = instruction
+        if system_prompt:
+            prompt = f"{system_prompt}\n\n{instruction}"
+
+        env = {**os.environ}
+        model_name = self.config.model or "codex-default"
+        base_url = self._resolve_model_base_url()
+        if self.config.openai_api_key:
+            env["OPENAI_API_KEY"] = self.config.openai_api_key
+        if relay_dir:
+            if not env.get("TERM") or env.get("TERM") == "dumb":
+                env["TERM"] = "xterm-256color"
+            cmd = self._build_codex_interactive_command(work_dir, prompt=prompt)
+            cmd = self._build_nemo_relay_command(
+                codex_cmd=cmd,
+                relay_dir=relay_dir,
+                model_name=model_name,
+                metadata=metadata,
+                base_url=base_url,
+            )
+        else:
+            cmd = self._build_codex_command(prompt, work_dir)
+            if base_url:
+                env["OPENAI_BASE_URL"] = base_url
+        if relay_dir:
+            stdout, stderr, returncode = await self._run_codex_relay_pty(
+                cmd=cmd,
+                prompt=None,
+                env=env,
+                relay_dir=relay_dir,
+            )
+        elif base_url:
+            stdout, stderr, returncode = await self._run_codex_exec_command(
+                cmd=cmd,
+                env=env,
+            )
+        else:
+            stdout, stderr, returncode = await self._run_codex_exec_command(
+                cmd=cmd,
+                env=env,
+            )
+
         return (
-            stdout.decode(errors="replace"),
-            self.config.model or "codex-default",
-            stderr.decode(errors="replace"),
-            proc.returncode,
+            stdout,
+            model_name,
+            stderr,
+            returncode,
         )
 
     async def responses(
@@ -914,7 +1027,13 @@ class CodexAgent(SimpleResponsesAPIAgent):
 
         work_dir = await self._materialize_swebench_workspace(metadata)
         relay_dir = self._resolve_nemo_relay_output_dir(work_dir)
-        stdout, model_name, stderr, returncode = await self._run_codex(user_message, system_prompt, work_dir)
+        stdout, model_name, stderr, returncode = await self._run_codex(
+            user_message,
+            system_prompt,
+            work_dir,
+            relay_dir,
+            dict(metadata),
+        )
         output_items, usage = parse_codex_jsonl(stdout)
         patch = await self._collect_patch(work_dir)
         relay_metadata: dict[str, str] = {}
@@ -937,24 +1056,7 @@ class CodexAgent(SimpleResponsesAPIAgent):
         input_tokens = usage.get("input_tokens", 0)
         output_tokens = usage.get("output_tokens", 0)
         if relay_dir:
-            relay_capture = _CodexNemoRelayCapture(
-                relay_dir=relay_dir,
-                config=self.config.nemo_relay,
-                model_name=model_name,
-                input_text=user_message,
-                metadata=dict(metadata),
-            )
-            relay_metadata = relay_capture.close(
-                stdout=stdout,
-                output_items=output_items,
-                output={
-                    "patch_exists": bool(patch.strip()),
-                    "assistant_messages": sum(1 for item in output_items if getattr(item, "type", None) == "message"),
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "codex_returncode": returncode,
-                },
-            )
+            relay_metadata = self._collect_nemo_relay_metadata(relay_dir)
 
         return NeMoGymResponse(
             id=f"resp_{uuid4().hex}",
@@ -979,6 +1081,7 @@ class CodexAgent(SimpleResponsesAPIAgent):
                 "instance_id": str(metadata.get("instance_id") or ""),
                 "codex_returncode": "" if returncode is None else str(returncode),
                 "codex_stderr": stderr[-4000:],
+                "codex_stdout_tail": stdout[-4000:],
             }
             | relay_metadata,
         )

@@ -26,7 +26,7 @@ consistent observability layer across them.
 | Hermes | Python adapter-level NeMoRelay capture around Hermes callbacks | [hermes/](hermes/) |
 | OpenClaw | Optional NeMoFlow plugin loaded by the OpenClaw harness | [openclaw/](openclaw/) |
 | OpenCode | Optional NeMoFlow plugin inside the OpenCode runtime | [opencode/](opencode/) |
-| Codex | Optional Python NeMoRelay exporters around `codex exec --json` in the Gym wrapper | [codex/](codex/) |
+| Codex | Native NeMo Relay Codex hook wrapper launched from the Gym wrapper | [codex/](codex/) |
 | Claude Code | Optional NeMoFlow wrapper around the Claude Code CLI in the Gym wrapper | [claude-code/](claude-code/) |
 
 ATOF is the source trace to use when losslessness matters. ATIF is the normalized
@@ -43,9 +43,9 @@ OpenInference export to Phoenix from the same Relay capture path, which shows
 that the file-first contract can support multiple downstream visualizations
 without making a live telemetry server mandatory.
 
-Known follow-up: Codex ATOF preserves native `command_execution` and
-`file_change` records, but the current Codex ATIF/OpenInference projection still
-shows only agent/LLM spans. That is a projection gap, not a capture gap.
+Codex now uses Relay's native hook path and captures model, Bash, and
+`apply_patch` activity in both ATOF and ATIF. The checked-in Codex rollout has
+SWE-bench verification disabled, matching the other artifact-focused captures.
 
 ## Layout
 

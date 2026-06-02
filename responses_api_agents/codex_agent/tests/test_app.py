@@ -30,9 +30,8 @@ from nemo_gym.server_utils import ServerClient
 from responses_api_agents.codex_agent.app import (
     CodexAgent,
     CodexAgentConfig,
-    CodexNemoRelayConfig,
-    _CodexNemoRelayCapture,
     _extract_instruction,
+    _parse_codex_version,
     parse_codex_jsonl,
 )
 
@@ -69,9 +68,13 @@ class TestSanity:
         assert cfg.approval_policy == "never"
         assert cfg.ephemeral is True
         assert cfg.nemo_relay.enabled is False
+        assert cfg.nemo_relay.command == "nemo-relay"
+        assert cfg.nemo_relay.bypass_hook_trust is False
+        assert cfg.nemo_relay.interactive_prompt_delay == 5.0
+        assert cfg.nemo_relay.interactive_startup_timeout == 60.0
+        assert cfg.nemo_relay.interactive_shutdown_timeout == 10.0
         assert cfg.nemo_relay.atof_filename == "codex.atof.jsonl"
         assert cfg.nemo_relay.atif_filename_template == "codex-{session_id}.atif.json"
-        assert cfg.nemo_relay.include_raw_events is True
         assert cfg.nemo_relay.openinference.enabled is False
         assert cfg.nemo_relay.openinference.endpoint is None
         assert cfg.nemo_relay.openinference.transport == "http_binary"
@@ -83,6 +86,10 @@ class TestSanity:
     def test_command_prefix_splits(self) -> None:
         cfg = _config(command="npx -y @openai/codex")
         assert cfg.command_parts == ["npx", "-y", "@openai/codex"]
+
+    def test_parse_codex_version(self) -> None:
+        assert _parse_codex_version("codex-cli 0.129.1") == (0, 129, 1)
+        assert _parse_codex_version("no version here") is None
 
     def test_candidate_instance_ids(self) -> None:
         assert CodexAgent._candidate_instance_ids("django__django-13741") == [
@@ -117,6 +124,92 @@ class TestSanity:
         assert ["--profile", "frontier"] == cmd[cmd.index("--profile") : cmd.index("--profile") + 2]
         assert ["--cd", "/tmp/work"] == cmd[cmd.index("--cd") : cmd.index("--cd") + 2]
         assert cmd[-2:] == ["--", "fix it"]
+
+    def test_build_codex_command_can_bypass_hook_trust_for_relay(self) -> None:
+        agent = _make_agent(nemo_relay={"enabled": True, "bypass_hook_trust": True})
+
+        cmd = agent._build_codex_command("fix it", "/tmp/work")
+
+        assert "--dangerously-bypass-hook-trust" in cmd
+
+    def test_build_codex_interactive_command_for_relay(self) -> None:
+        agent = _make_agent(
+            command="npx -y --package @openai/codex@latest codex",
+            model="gpt-test",
+            nemo_relay={"enabled": True, "bypass_hook_trust": True},
+        )
+
+        cmd = agent._build_codex_interactive_command("/tmp/work", prompt="fix it")
+
+        assert cmd[:5] == ["npx", "-y", "--package", "@openai/codex@latest", "codex"]
+        assert "exec" not in cmd
+        assert "--json" not in cmd
+        assert ["--sandbox", "workspace-write"] == cmd[cmd.index("--sandbox") : cmd.index("--sandbox") + 2]
+        assert ["--ask-for-approval", "never"] == cmd[
+            cmd.index("--ask-for-approval") : cmd.index("--ask-for-approval") + 2
+        ]
+        assert ["--model", "gpt-test"] == cmd[cmd.index("--model") : cmd.index("--model") + 2]
+        assert ["--cd", "/tmp/work"] == cmd[cmd.index("--cd") : cmd.index("--cd") + 2]
+        assert "--dangerously-bypass-hook-trust" in cmd
+        assert "--no-alt-screen" in cmd
+        assert cmd[-2:] == ["--", "fix it"]
+
+    def test_build_nemo_relay_command_wraps_codex(self, tmp_path: Path) -> None:
+        agent = _make_agent(
+            command="npx -y --package @openai/codex@latest codex",
+            openai_base_url="http://model-server/v1",
+            nemo_relay={
+                "enabled": True,
+                "command": "/opt/nemo-relay",
+                "openinference": {
+                    "enabled": True,
+                    "endpoint": "http://127.0.0.1:6006/v1/traces",
+                    "project_name": "oi-gym-codex-relay",
+                },
+            },
+        )
+        codex_cmd = agent._build_codex_interactive_command("/tmp/work", prompt="fix it")
+
+        cmd = agent._build_nemo_relay_command(
+            codex_cmd=codex_cmd,
+            relay_dir=tmp_path,
+            model_name="gpt-test",
+            metadata={"instance_id": "django__django-13741", "dataset_name": "swe"},
+            base_url=agent._resolve_model_base_url(),
+        )
+
+        assert cmd[:8] == [
+            "/opt/nemo-relay",
+            "run",
+            "--agent",
+            "codex",
+            "--config",
+            str(tmp_path / "nemo-relay.config.toml"),
+            "--openai-base-url",
+            "http://model-server/v1",
+        ]
+        assert cmd[8] == "--plugin-config"
+        passthrough_index = cmd.index("--")
+        assert cmd[passthrough_index + 1 :] == codex_cmd[len(agent.config.command_parts) :]
+        assert cmd[-2:] == ["--", "fix it"]
+        assert (
+            tmp_path / "nemo-relay.config.toml"
+        ).read_text() == '[agents.codex]\ncommand = "npx -y --package @openai/codex@latest codex"\n'
+        plugin = json.loads(cmd[cmd.index("--plugin-config") + 1])
+        component = plugin["components"][0]
+        assert component["kind"] == "observability"
+        assert component["config"]["atof"] == {
+            "enabled": True,
+            "output_directory": str(tmp_path),
+            "filename": "codex.atof.jsonl",
+            "mode": "overwrite",
+        }
+        atif = component["config"]["atif"]
+        assert atif["enabled"] is True
+        assert atif["agent_name"] == "codex"
+        assert atif["model_name"] == "gpt-test"
+        assert atif["extra"]["instance_id"] == "django__django-13741"
+        assert component["config"]["openinference"]["headers"]["x-project-name"] == "oi-gym-codex-relay"
 
 
 class TestExtractInstruction:
@@ -213,9 +306,13 @@ class TestConfigYaml:
         assert inner["sandbox"] == "workspace-write"
         assert inner["approval_policy"] == "never"
         assert inner["nemo_relay"]["enabled"] is False
+        assert inner["nemo_relay"]["command"] == "nemo-relay"
+        assert inner["nemo_relay"]["bypass_hook_trust"] is False
+        assert inner["nemo_relay"]["interactive_prompt_delay"] == 5.0
+        assert inner["nemo_relay"]["interactive_startup_timeout"] == 60.0
+        assert inner["nemo_relay"]["interactive_shutdown_timeout"] == 10.0
         assert inner["nemo_relay"]["atof_filename"] == "codex.atof.jsonl"
         assert inner["nemo_relay"]["atif_filename_template"] == "codex-{session_id}.atif.json"
-        assert inner["nemo_relay"]["include_raw_events"] is True
         assert inner["nemo_relay"]["openinference"]["enabled"] is False
         assert inner["nemo_relay"]["openinference"]["endpoint"] is None
         assert inner["nemo_relay"]["openinference"]["transport"] == "http_binary"
@@ -241,58 +338,24 @@ class TestConfigYaml:
         assert metadata["instance_id"] == row["instance_id"]
 
 
-class TestOpenInferenceConfig:
-    def test_disabled_openinference_skips_registration(self) -> None:
-        capture = object.__new__(_CodexNemoRelayCapture)
-        capture.config = CodexNemoRelayConfig()
-        capture._openinference = None
-        capture._openinference_subscriber = None
+class TestNemoRelayMetadata:
+    def test_collect_nemo_relay_metadata(self, tmp_path: Path) -> None:
+        (tmp_path / "codex.atof.jsonl").write_text("{}\n")
+        atif_path = tmp_path / "codex-session.atif.json"
+        atif_path.write_text("{}")
+        agent = _make_agent(nemo_relay={"enabled": True})
 
-        capture._register_openinference(MagicMock(), MagicMock())
+        metadata = agent._collect_nemo_relay_metadata(tmp_path)
 
-        assert capture._openinference is None
-        assert capture._openinference_subscriber is None
+        assert metadata["nemo_relay_output_dir"] == str(tmp_path)
+        assert metadata["nemo_relay_atof_path"] == str(tmp_path / "codex.atof.jsonl")
+        assert metadata["nemo_relay_atif_path"] == str(atif_path)
+        assert json.loads(metadata["nemo_relay_atif_paths"]) == [str(atif_path)]
 
-    def test_register_openinference_project_header(self) -> None:
-        class FakeOpenInferenceConfig:
-            def __init__(self) -> None:
-                self.headers = {}
-                self.resource_attributes = {}
+    def test_collect_nemo_relay_metadata_warns_for_empty_atof(self, tmp_path: Path) -> None:
+        (tmp_path / "codex.atof.jsonl").write_text("")
+        agent = _make_agent(nemo_relay={"enabled": True})
 
-            def set_header(self, key: str, value: str) -> None:
-                self.headers[key] = value
+        metadata = agent._collect_nemo_relay_metadata(tmp_path)
 
-        class FakeOpenInferenceSubscriber:
-            def __init__(self, config: FakeOpenInferenceConfig) -> None:
-                self.config = config
-                self.registered = []
-
-            def register(self, name: str) -> None:
-                self.registered.append(name)
-
-        capture = object.__new__(_CodexNemoRelayCapture)
-        capture.config = CodexNemoRelayConfig(
-            openinference={
-                "enabled": True,
-                "endpoint": "http://127.0.0.1:6006/v1/traces",
-                "project_name": "oi-gym-codex-relay",
-                "headers": {"authorization": "Bearer test"},
-                "resource_attributes": {"deployment.environment": "test"},
-            }
-        )
-        capture._openinference = None
-        capture._openinference_subscriber = None
-
-        capture._register_openinference(FakeOpenInferenceConfig, FakeOpenInferenceSubscriber)
-
-        assert isinstance(capture._openinference, FakeOpenInferenceSubscriber)
-        assert capture._openinference_subscriber.startswith("codex_openinference_")
-        config = capture._openinference.config
-        assert config.endpoint == "http://127.0.0.1:6006/v1/traces"
-        assert config.transport == "http_binary"
-        assert config.service_name == "nemo-relay-codex"
-        assert config.service_namespace == "gym"
-        assert config.headers["authorization"] == "Bearer test"
-        assert config.headers["x-project-name"] == "oi-gym-codex-relay"
-        assert config.resource_attributes == {"deployment.environment": "test"}
-        assert capture._openinference.registered == [capture._openinference_subscriber]
+        assert "empty" in metadata["nemo_relay_warning"]
