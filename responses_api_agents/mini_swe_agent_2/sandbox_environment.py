@@ -33,6 +33,7 @@ except ModuleNotFoundError:
 
 
 from nemo_gym.sandbox import Sandbox, SandboxSpec, rewrite_image
+from responses_api_agents.mini_swe_agent_2.relay_exporter import current_relay_run
 
 
 @dataclass
@@ -144,20 +145,39 @@ class MiniSWESandboxEnvironment:
         command = action.get("command", "") if isinstance(action, dict) else action
         timeout_s = timeout or (self.config.eval_timeout if is_eval else self.config.step_timeout)
         exec_cwd = cwd or self.config.cwd
-
-        result = self._sandbox.exec(
-            self._handle,
-            self._command(command, exec_cwd),
-            cwd="/",
-            timeout_s=timeout_s,
-            user=self.config.user,
+        relay_run = current_relay_run()
+        relay_handle = (
+            relay_run.start_sandbox_exec(
+                command=command,
+                cwd=exec_cwd,
+                is_eval=is_eval,
+                timeout_s=timeout_s,
+                user=self.config.user,
+            )
+            if relay_run
+            else None
         )
+
+        try:
+            result = self._sandbox.exec(
+                self._handle,
+                self._command(command, exec_cwd),
+                cwd="/",
+                timeout_s=timeout_s,
+                user=self.config.user,
+            )
+        except Exception as exc:
+            if relay_run:
+                relay_run.finish_sandbox_exec(relay_handle, error=exc)
+            raise
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
         response = {
             "output": output,
             "returncode": result.return_code,
             "exception_info": "",
         }
+        if relay_run:
+            relay_run.finish_sandbox_exec(relay_handle, response=response)
         self._check_finished(response)
         return response
 

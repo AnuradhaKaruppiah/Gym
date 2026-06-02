@@ -17,6 +17,7 @@ over the older Docker/Singularity mini-SWE integration.
   - [Configuration](#configuration)
     - [Agent Configuration](#agent-configuration)
     - [Model Parameters](#model-parameters)
+    - [Relay Observability](#relay-observability)
   - [Usage](#usage)
     - [Server](#server)
     - [Collect Rollouts](#collect-rollouts)
@@ -165,6 +166,11 @@ mini_swe_agent_2:
       eval_timeout: 1800
       skip_if_exists: false
       step_limit: 250
+      observability:
+        relay:
+          enabled: false
+          output_dir: results/relay/{instance_id}/{run_id}
+          strict: false
 ```
 
 Optional `sandbox_resource_profiles` can be configured as a list of resource
@@ -200,6 +206,41 @@ No tool calls found in the response. Every response MUST include at least one to
 That symptom was not a sandbox failure and was not a reason to force the `bash`
 tool. The successful smoke kept `tool_choice=auto` and lowered
 `max_output_tokens` to `16384`.
+
+### Relay Observability
+
+NeMo Relay export is optional and disabled by default. When enabled, the Ray
+worker registers Relay ATOF and ATIF exporters for each `/run` call and writes:
+
+- `events.atof.jsonl` - raw Relay lifecycle events.
+- `trajectory.atif.json` - trajectory view derived from the same Relay events.
+
+Install the optional dependency in the agent environment before enabling it:
+
+```bash
+pip install -e ".[sandbox]"
+pip install "nemo-relay>=0.3.0"
+```
+
+Then turn on the config:
+
+```yaml
+observability:
+  relay:
+    enabled: true
+    output_dir: results/relay/{instance_id}/{task_index}/{rollout_index}/{run_id}
+    strict: false
+```
+
+Supported `output_dir` placeholders are `output`, `instance_id`, `run_id`,
+`task_index`, `rollout_index`, and `model`. With `strict: false`, relay exporter
+failures are logged and the SWE-bench run continues. With `strict: true`, relay
+setup or export failures fail the run.
+
+The exporter captures the Mini SWE agent run scope, sandbox command inputs,
+sandbox command outputs, eval command outputs, and final eval metadata. It does
+not change model routing, sandbox execution, reward computation, or rollout
+collection behavior.
 
 ## Usage
 

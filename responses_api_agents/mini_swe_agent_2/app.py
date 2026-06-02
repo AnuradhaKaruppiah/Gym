@@ -27,7 +27,7 @@ import ray
 import yaml
 from fastapi import Body, FastAPI
 from minisweagent.config import builtin_config_dir, get_config_path
-from pydantic import ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from nemo_gym.base_resources_server import (
     BaseRunRequest,
@@ -39,7 +39,7 @@ from nemo_gym.base_responses_api_agent import (
     SimpleResponsesAPIAgent,
 )
 from nemo_gym.config_types import ModelServerRef
-from nemo_gym.global_config import TASK_INDEX_KEY_NAME
+from nemo_gym.global_config import ROLLOUT_INDEX_KEY_NAME, TASK_INDEX_KEY_NAME
 from nemo_gym.openai_utils import (
     NeMoGymResponse,
     NeMoGymResponseCreateParamsNonStreaming,
@@ -49,6 +49,17 @@ from nemo_gym.server_utils import (
     ServerClient,
     get_first_server_config_dict,
 )
+from responses_api_agents.mini_swe_agent_2.relay_exporter import MiniSWERelayRun, format_output_dir
+
+
+class MiniSWERelayConfig(BaseModel):
+    enabled: bool = False
+    output_dir: Optional[str] = None
+    strict: bool = False
+
+
+class MiniSWEObservabilityConfig(BaseModel):
+    relay: MiniSWERelayConfig = Field(default_factory=MiniSWERelayConfig)
 
 
 class MiniSWEAgentConfig(BaseResponsesAPIAgentConfig):
@@ -65,6 +76,7 @@ class MiniSWEAgentConfig(BaseResponsesAPIAgentConfig):
     step_limit: int = 250
     tool_choice: Optional[str | dict[str, Any]] = None
     sandbox_resource_profiles: Optional[list[dict[str, str]]] = None
+    observability: MiniSWEObservabilityConfig = Field(default_factory=MiniSWEObservabilityConfig)
 
 
 class MiniSWEAgentRunRequest(BaseRunRequest):
@@ -477,52 +489,95 @@ def _run_mini_swe_v2(**params: Any) -> dict[str, Any]:
     run_id = f"{int(time.time())}_{uuid4()}"
     trajectory_path = instance_dir / f"{instance_id}_{run_id}.traj.json"
     agent_config["output_path"] = trajectory_path
+    relay_config = dict(params.get("relay") or {})
+    relay_output_template = relay_config.get("output_dir") or "{output}/{instance_id}/relay/{run_id}"
+    relay_output_dir = format_output_dir(
+        relay_output_template,
+        {
+            "output": str(output_dir),
+            "instance_id": instance_id,
+            "run_id": run_id,
+            "task_index": params.get("task_index"),
+            "rollout_index": params.get("rollout_index"),
+            "model": params.get("model"),
+        },
+    )
+    relay_run = MiniSWERelayRun(
+        enabled=bool(relay_config.get("enabled", False)),
+        output_dir=relay_output_dir,
+        strict=bool(relay_config.get("strict", False)),
+        trajectory_id=relay_config.get("trajectory_id") or f"{instance_id}-{run_id}",
+        instance_id=instance_id,
+        model_name=str(params["model"]),
+        task_index=params.get("task_index"),
+        rollout_index=params.get("rollout_index"),
+    )
     env = None
     agent = None
+    result_payload: dict[str, Any] | None = None
     try:
-        print(f"[EVAL]{instance_id} Creating environment...", flush=True)
-        env = get_environment(environment_config)
-        print(f"[EVAL]{instance_id} Environment created", flush=True)
+        with relay_run:
+            print(f"[EVAL]{instance_id} Creating environment...", flush=True)
+            relay_run.record_mark("mini_swe_agent_2.environment.create.start", {"instance_id": instance_id})
+            env = get_environment(environment_config)
+            relay_run.record_mark("mini_swe_agent_2.environment.create.end", {"instance_id": instance_id})
+            print(f"[EVAL]{instance_id} Environment created", flush=True)
 
-        model = get_model(config=model_config)
-        agent = DefaultAgent(model, env, **agent_config)
+            model = get_model(config=model_config)
+            agent = DefaultAgent(model, env, **agent_config)
 
-        if params["run_golden"]:
-            exit_status = "Gold Patch Applied"
-            model_patch = instance.get("patch", "")
-            data = agent.save(None, {"messages": []})
-        else:
-            print(f"[EVAL]{instance_id} Running mini-swe-agent v2...", flush=True)
-            info = agent.run(instance["problem_statement"])
-            exit_status = info.get("exit_status", "")
-            model_patch = info.get("submission", "")
-            data = agent.save(
-                trajectory_path,
-                {"instance_id": instance_id},
+            if params["run_golden"]:
+                exit_status = "Gold Patch Applied"
+                model_patch = instance.get("patch", "")
+                data = agent.save(None, {"messages": []})
+            else:
+                print(f"[EVAL]{instance_id} Running mini-swe-agent v2...", flush=True)
+                relay_run.record_mark(
+                    "mini_swe_agent_2.agent.run.start",
+                    {"instance_id": instance_id, "problem_statement": instance["problem_statement"]},
+                )
+                info = agent.run(instance["problem_statement"])
+                relay_run.record_mark(
+                    "mini_swe_agent_2.agent.run.end",
+                    {"instance_id": instance_id, "exit_status": info.get("exit_status", "")},
+                )
+                exit_status = info.get("exit_status", "")
+                model_patch = info.get("submission", "")
+                data = agent.save(
+                    trajectory_path,
+                    {"instance_id": instance_id},
+                )
+
+            relay_run.record_agent_messages(data.get("messages", []))
+            print(f"[EVAL]{instance_id} Running eval", flush=True)
+            relay_run.record_mark("mini_swe_agent_2.eval.start", {"instance_id": instance_id})
+            eval_report = _run_eval_v2(
+                instance=instance,
+                env=env,
+                model_patch=model_patch,
+                instance_dir=instance_dir,
+                run_id=run_id,
+                is_golden=params["run_golden"],
             )
+            relay_run.record_mark("mini_swe_agent_2.eval.end", {"instance_id": instance_id})
+            print(f"[EVAL]{instance_id} Eval completed", flush=True)
 
-        print(f"[EVAL]{instance_id} Running eval", flush=True)
-        eval_report = _run_eval_v2(
-            instance=instance,
-            env=env,
-            model_patch=model_patch,
-            instance_dir=instance_dir,
-            run_id=run_id,
-            is_golden=params["run_golden"],
-        )
-        print(f"[EVAL]{instance_id} Eval completed", flush=True)
+            input_messages, response_output, responses = _split_trajectory_for_responses(data.get("messages", []))
 
-        input_messages, response_output, responses = _split_trajectory_for_responses(data.get("messages", []))
-
-        return {
-            instance_id: {
-                "input_messages": input_messages,
-                "response_output": response_output,
-                "responses": responses,
-                "eval_report": eval_report,
-                "exit_status": exit_status,
+            result_payload = {
+                instance_id: {
+                    "input_messages": input_messages,
+                    "response_output": response_output,
+                    "responses": responses,
+                    "eval_report": eval_report,
+                    "exit_status": exit_status,
+                }
             }
-        }
+        relay_artifacts = relay_run.artifacts()
+        assert result_payload is not None
+        if relay_artifacts:
+            result_payload[instance_id]["eval_report"]["relay_artifacts"] = relay_artifacts
+        return result_payload
     finally:
         if env and hasattr(env, "cleanup"):
             env.cleanup()
@@ -674,6 +729,7 @@ class MiniSWEAgent(SimpleResponsesAPIAgent):
 
             mini_swe_config_path = _swebench_config_path()
             config = yaml.safe_load(get_config_path(mini_swe_config_path).read_text())
+            body_dict = body.model_dump()
             responses_create_params_dict = body.responses_create_params.model_dump(exclude_none=True)
 
             default_model_kwargs = config["model"]["model_kwargs"]
@@ -735,12 +791,14 @@ class MiniSWEAgent(SimpleResponsesAPIAgent):
                     run_golden=run_golden,
                     instance_id=instance_id,
                     config=config_path,
-                    # TODO: add this later
-                    instance_dict=body.model_dump(),
+                    instance_dict=body_dict,
                     responses_create_params=json.dumps(responses_create_params_dict),
                     step_timeout=step_timeout,
                     eval_timeout=eval_timeout,
                     step_limit=step_limit,
+                    task_index=body_dict.get(TASK_INDEX_KEY_NAME),
+                    rollout_index=body_dict.get(ROLLOUT_INDEX_KEY_NAME),
+                    relay=self.config.observability.relay.model_dump(),
                 )
                 future = runner_ray_remote.remote(run_mini_swe_with_sandbox, params)
                 result = await asyncio.to_thread(ray.get, future)

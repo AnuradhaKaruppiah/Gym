@@ -51,6 +51,7 @@ from responses_api_agents.mini_swe_agent_2.app import (
     MiniSWEAgentConfig,
     MiniSWEAgentRunRequest,
     MiniSWEAgentVerifyResponse,
+    MiniSWERelayConfig,
     _is_resolved,
     _json_dict_from_metadata,
     _message_content_to_text,
@@ -727,6 +728,46 @@ class TestApp:
             "presence_penalty": 0.0,
             "repetition_penalty": 1.0,
             "chat_template_kwargs": {"enable_thinking": True},
+        }
+
+    @patch("responses_api_agents.mini_swe_agent_2.app.ServerClient.load_from_global_config")
+    @patch("responses_api_agents.mini_swe_agent_2.app.get_first_server_config_dict")
+    @patch("responses_api_agents.mini_swe_agent_2.app.get_config_path")
+    @patch("responses_api_agents.mini_swe_agent_2.app.runner_ray_remote")
+    @patch("asyncio.to_thread")
+    async def test_run_passes_relay_config_to_worker(
+        self,
+        mock_to_thread,
+        mock_runner_ray_remote,
+        mock_get_config_path,
+        mock_get_first_server_config_dict,
+        mock_load_from_global_config,
+    ) -> None:
+        config = create_test_config()
+        config.observability.relay = MiniSWERelayConfig(
+            enabled=True,
+            output_dir="results/relay/{instance_id}/{task_index}/{rollout_index}/{run_id}",
+            strict=True,
+        )
+        mock_server_client = MagicMock(spec=ServerClient)
+        server = MiniSWEAgent(config=config, server_client=mock_server_client)
+
+        setup_server_client_mocks(mock_load_from_global_config, mock_get_first_server_config_dict)
+        setup_config_path_mock(mock_get_config_path)
+        setup_run_mini_swe_mock(mock_to_thread, mock_runner_ray_remote)
+
+        run_request = create_run_request()
+        run_request.__pydantic_extra__.update({TASK_INDEX_KEY_NAME: 7, ROLLOUT_INDEX_KEY_NAME: 3})
+
+        await server.run(run_request)
+
+        params = mock_runner_ray_remote.remote.call_args.args[1]
+        assert params["task_index"] == 7
+        assert params["rollout_index"] == 3
+        assert params["relay"] == {
+            "enabled": True,
+            "output_dir": "results/relay/{instance_id}/{task_index}/{rollout_index}/{run_id}",
+            "strict": True,
         }
 
     @patch("responses_api_agents.mini_swe_agent_2.app.ServerClient.load_from_global_config")
