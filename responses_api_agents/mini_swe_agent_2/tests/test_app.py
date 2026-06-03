@@ -55,6 +55,7 @@ from responses_api_agents.mini_swe_agent_2.app import (
     _is_resolved,
     _json_dict_from_metadata,
     _message_content_to_text,
+    _relay_observability_plugin_config,
     _responses_create_params_to_model_kwargs,
     _run_mini_swe_v2,
     _sandbox_spec_for_instance,
@@ -375,6 +376,21 @@ class TestApp:
         monkeypatch.setattr(mini_swe_app_module, "builtin_config_dir", tmp_path / "missing")
         assert _swebench_config_path() == tmp_path / "missing" / "extra" / "swebench.yaml"
 
+        plugin_config = _relay_observability_plugin_config(
+            output_dir="/tmp/relay",
+            trajectory_id="task-run",
+            instance_id="django__django-123",
+            model_name="nvidia/model",
+            task_index=7,
+            rollout_index=3,
+        )
+        observability = plugin_config["components"][0]
+        assert observability["kind"] == "observability"
+        assert observability["config"]["atof"]["output_directory"] == "/tmp/relay"
+        assert observability["config"]["atif"]["agent_name"] == "mini-swe-agent"
+        assert observability["config"]["atif"]["extra"]["instance_id"] == "django__django-123"
+        assert observability["config"]["atif"]["extra"]["trajectory_id"] == "task-run"
+
     def test_run_mini_swe_records_completion_and_errors(self, monkeypatch) -> None:
         monkeypatch.setattr(
             mini_swe_app_module,
@@ -621,6 +637,94 @@ class TestApp:
             }
         ]
 
+        relay_calls: dict[str, Any] = {}
+
+        def start_relay_gateway(**kwargs: Any) -> tuple[object, str]:
+            relay_calls["start"] = kwargs
+            return object(), "http://relay-gateway"
+
+        monkeypatch.setattr(mini_swe_app_module, "_start_relay_gateway", start_relay_gateway)
+        monkeypatch.setattr(mini_swe_app_module, "_stop_relay_gateway", lambda _process: None)
+        monkeypatch.setattr(
+            mini_swe_app_module,
+            "_relay_artifacts",
+            lambda _output_dir: {"atof": "/tmp/relay/events.atof.jsonl", "atif": "/tmp/relay/trajectory.atif.json"},
+        )
+
+        gateway_result = _run_mini_swe_v2(
+            **(
+                params
+                | {
+                    "relay": {
+                        "enabled": True,
+                        "mode": "gateway",
+                        "command": "/bin/nemo-relay",
+                        "output_dir": "{output}/{instance_id}/relay/{run_id}",
+                    }
+                }
+            )
+        )
+
+        assert relay_calls["start"]["command"] == "/bin/nemo-relay"
+        assert relay_calls["start"]["upstream_base_url"] == "http://model/v1"
+        assert relay_calls["start"]["plugin_config"]["components"][0]["config"]["atif"]["agent_name"] == (
+            "mini-swe-agent"
+        )
+        assert holder["model_config"]["model_kwargs"]["base_url"] == "http://relay-gateway/v1"
+        assert holder["model_config"]["model_kwargs"]["extra_headers"]["x-nemo-relay-agent-kind"] == (
+            "mini-swe-agent"
+        )
+        assert "x-nemo-relay-session-id" in holder["model_config"]["model_kwargs"]["extra_headers"]
+        assert gateway_result["django__django-123"]["eval_report"]["relay_artifacts"] == {
+            "atof": "/tmp/relay/events.atof.jsonl",
+            "atif": "/tmp/relay/trajectory.atif.json",
+        }
+
+        class FakeSdkObserver:
+            def __init__(self) -> None:
+                self.close_reasons: list[str] = []
+
+            def close(self, reason: str, **_kwargs: Any) -> None:
+                self.close_reasons.append(reason)
+
+        sdk_observer = FakeSdkObserver()
+
+        class FakeSdkRun:
+            def __init__(self) -> None:
+                self.observer = sdk_observer
+
+            def close(self, reason: str) -> dict[str, str]:
+                sdk_observer.close(reason)
+                relay_calls["sdk_close_count"] = int(relay_calls.get("sdk_close_count", 0)) + 1
+                return {"atof": "/tmp/relay/events.atof.jsonl", "atif": "/tmp/relay/trajectory.atif.json"}
+
+        def start_relay_sdk_observer(**kwargs: Any) -> FakeSdkRun:
+            relay_calls["sdk_start"] = kwargs
+            return FakeSdkRun()
+
+        monkeypatch.setattr(mini_swe_app_module, "_start_relay_sdk_observer", start_relay_sdk_observer)
+        sdk_result = _run_mini_swe_v2(
+            **(
+                params
+                | {
+                    "relay": {
+                        "enabled": True,
+                        "mode": "sdk",
+                        "output_dir": "{output}/{instance_id}/relay/{run_id}",
+                    }
+                }
+            )
+        )
+
+        assert relay_calls["sdk_start"]["model_name"] == "hosted/model"
+        assert holder["agent_config"]["observer"] is sdk_observer
+        assert "run_complete" in sdk_observer.close_reasons
+        assert relay_calls["sdk_close_count"] == 1
+        assert sdk_result["django__django-123"]["eval_report"]["relay_artifacts"] == {
+            "atof": "/tmp/relay/events.atof.jsonl",
+            "atif": "/tmp/relay/trajectory.atif.json",
+        }
+
         golden_params = params | {"run_golden": True}
         result = _run_mini_swe_v2(**golden_params)
 
@@ -768,6 +872,8 @@ class TestApp:
             "enabled": True,
             "output_dir": "results/relay/{instance_id}/{task_index}/{rollout_index}/{run_id}",
             "strict": True,
+            "mode": "manual",
+            "command": "nemo-relay",
         }
 
     @patch("responses_api_agents.mini_swe_agent_2.app.ServerClient.load_from_global_config")

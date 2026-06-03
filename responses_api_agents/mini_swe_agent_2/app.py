@@ -15,9 +15,15 @@
 import asyncio
 import hashlib
 import json
+import os
+import shlex
+import socket
+import subprocess
 import sys
 import time
 import traceback
+import urllib.error
+import urllib.request
 from asyncio import Semaphore
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, cast
@@ -56,6 +62,8 @@ class MiniSWERelayConfig(BaseModel):
     enabled: bool = False
     output_dir: Optional[str] = None
     strict: bool = False
+    mode: Literal["manual", "gateway", "sdk"] = "manual"
+    command: str = "nemo-relay"
 
 
 class MiniSWEObservabilityConfig(BaseModel):
@@ -193,6 +201,163 @@ def _swebench_image_name(instance: dict[str, Any], subset: str) -> str:
 
     docker_compatible_id = instance_id.replace("__", "_s_")
     return f"docker.io/xingyaoww/sweb.eval.x86_64.{docker_compatible_id}:latest".lower()
+
+
+def _free_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _relay_observability_plugin_config(
+    *,
+    output_dir: str,
+    trajectory_id: str,
+    instance_id: str,
+    model_name: str,
+    task_index: Any,
+    rollout_index: Any,
+) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "components": [
+            {
+                "kind": "observability",
+                "enabled": True,
+                "config": {
+                    "version": 1,
+                    "atof": {
+                        "enabled": True,
+                        "output_directory": output_dir,
+                        "filename": "events.atof.jsonl",
+                        "mode": "overwrite",
+                    },
+                    "atif": {
+                        "enabled": True,
+                        "agent_name": "mini-swe-agent",
+                        "model_name": model_name,
+                        "output_directory": output_dir,
+                        "filename_template": "trajectory-{session_id}.atif.json",
+                        "extra": {
+                            "gym_agent": "mini_swe_agent_2",
+                            "instance_id": instance_id,
+                            "trajectory_id": trajectory_id,
+                            "task_index": task_index,
+                            "rollout_index": rollout_index,
+                        },
+                    },
+                },
+            }
+        ],
+    }
+
+
+def _wait_for_relay_gateway(gateway_url: str, process: subprocess.Popen[str], *, timeout_s: float = 10.0) -> None:
+    deadline = time.time() + timeout_s
+    health_url = f"{gateway_url}/healthz"
+    while time.time() < deadline:
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            raise RuntimeError(
+                "nemo-relay gateway exited before becoming healthy "
+                f"(returncode={process.returncode}).\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            )
+        try:
+            with urllib.request.urlopen(health_url, timeout=0.5) as response:
+                if 200 <= response.status < 300:
+                    return
+        except (TimeoutError, urllib.error.URLError):
+            time.sleep(0.1)
+    raise RuntimeError(f"nemo-relay gateway did not become healthy at {health_url}")
+
+
+def _stop_relay_gateway(process: subprocess.Popen[str] | None) -> None:
+    if process is None:
+        return
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+    try:
+        process.communicate(timeout=1)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate(timeout=1)
+
+
+def _start_relay_gateway(
+    *,
+    command: str,
+    upstream_base_url: str,
+    plugin_config: dict[str, Any],
+    api_key: str | None,
+) -> tuple[subprocess.Popen[str], str]:
+    port = _free_loopback_port()
+    gateway_url = f"http://127.0.0.1:{port}"
+    argv = [
+        *shlex.split(command),
+        "--bind",
+        f"127.0.0.1:{port}",
+        "--openai-base-url",
+        upstream_base_url,
+        "--plugin-config",
+        json.dumps(plugin_config),
+    ]
+    env = os.environ.copy()
+    if api_key and not env.get("OPENAI_API_KEY"):
+        env["OPENAI_API_KEY"] = api_key
+    process = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    try:
+        _wait_for_relay_gateway(gateway_url, process)
+    except Exception:
+        _stop_relay_gateway(process)
+        raise
+    return process, gateway_url
+
+
+def _relay_artifacts(output_dir: str) -> dict[str, str]:
+    root = Path(output_dir)
+    artifacts: dict[str, str] = {}
+    atof_path = root / "events.atof.jsonl"
+    if atof_path.exists():
+        artifacts["atof"] = str(atof_path)
+    atif_paths = sorted(root.glob("trajectory-*.atif.json"))
+    if atif_paths:
+        artifacts["atif"] = str(atif_paths[-1])
+    return artifacts
+
+
+def _start_relay_sdk_observer(
+    *,
+    output_dir: str,
+    trajectory_id: str,
+    instance_id: str,
+    model_name: str,
+    task_index: Any,
+    rollout_index: Any,
+) -> Any:
+    from nemo_relay.integrations.mini_swe_agent import MiniSweAgentObservabilityConfig, start_observability
+
+    return start_observability(
+        MiniSweAgentObservabilityConfig(
+            output_dir=output_dir,
+            model_name=model_name,
+            trajectory_id=trajectory_id,
+            instance_id=instance_id,
+            task_index=task_index,
+            rollout_index=rollout_index,
+            extra={"gym_agent": "mini_swe_agent_2"},
+        )
+    )
 
 
 def _message_content_to_text(content: Any) -> str:
@@ -502,11 +667,57 @@ def _run_mini_swe_v2(**params: Any) -> dict[str, Any]:
             "model": params.get("model"),
         },
     )
+    relay_mode = str(relay_config.get("mode") or "manual")
+    if relay_mode not in {"manual", "gateway", "sdk"}:
+        raise ValueError(f"Unsupported mini-swe-agent relay mode: {relay_mode}")
+
+    relay_enabled = bool(relay_config.get("enabled", False))
+    relay_trajectory_id = relay_config.get("trajectory_id") or f"{instance_id}-{run_id}"
+    relay_gateway_process: subprocess.Popen[str] | None = None
+    relay_gateway_artifacts: dict[str, str] = {}
+    relay_sdk_run: Any | None = None
+    relay_sdk_artifacts: dict[str, str] = {}
+
+    if relay_enabled and relay_mode == "gateway" and not params["run_golden"]:
+        plugin_config = _relay_observability_plugin_config(
+            output_dir=relay_output_dir,
+            trajectory_id=relay_trajectory_id,
+            instance_id=instance_id,
+            model_name=str(params["model"]),
+            task_index=params.get("task_index"),
+            rollout_index=params.get("rollout_index"),
+        )
+        relay_gateway_process, relay_gateway_url = _start_relay_gateway(
+            command=str(relay_config.get("command") or "nemo-relay"),
+            upstream_base_url=str(params["base_url"]),
+            plugin_config=plugin_config,
+            api_key=params.get("api_key"),
+        )
+        model_kwargs["base_url"] = f"{relay_gateway_url}/v1"
+        extra_headers = dict(model_kwargs.get("extra_headers") or {})
+        extra_headers.update(
+            {
+                "x-nemo-relay-agent-kind": "mini-swe-agent",
+                "x-nemo-relay-session-id": str(relay_trajectory_id),
+            }
+        )
+        model_kwargs["extra_headers"] = extra_headers
+
+    if relay_enabled and relay_mode == "sdk" and not params["run_golden"]:
+        relay_sdk_run = _start_relay_sdk_observer(
+            output_dir=relay_output_dir,
+            trajectory_id=relay_trajectory_id,
+            instance_id=instance_id,
+            model_name=str(params["model"]),
+            task_index=params.get("task_index"),
+            rollout_index=params.get("rollout_index"),
+        )
+
     relay_run = MiniSWERelayRun(
-        enabled=bool(relay_config.get("enabled", False)),
+        enabled=relay_enabled and relay_mode == "manual",
         output_dir=relay_output_dir,
         strict=bool(relay_config.get("strict", False)),
-        trajectory_id=relay_config.get("trajectory_id") or f"{instance_id}-{run_id}",
+        trajectory_id=relay_trajectory_id,
         instance_id=instance_id,
         model_name=str(params["model"]),
         task_index=params.get("task_index"),
@@ -524,7 +735,10 @@ def _run_mini_swe_v2(**params: Any) -> dict[str, Any]:
             print(f"[EVAL]{instance_id} Environment created", flush=True)
 
             model = get_model(config=model_config)
-            agent = DefaultAgent(model, env, **agent_config)
+            if relay_sdk_run is not None:
+                agent = DefaultAgent(model, env, observer=relay_sdk_run.observer, **agent_config)
+            else:
+                agent = DefaultAgent(model, env, **agent_config)
 
             if params["run_golden"]:
                 exit_status = "Gold Patch Applied"
@@ -547,6 +761,11 @@ def _run_mini_swe_v2(**params: Any) -> dict[str, Any]:
                     trajectory_path,
                     {"instance_id": instance_id},
                 )
+
+            if relay_gateway_process is not None:
+                _stop_relay_gateway(relay_gateway_process)
+                relay_gateway_process = None
+                relay_gateway_artifacts = _relay_artifacts(relay_output_dir)
 
             relay_run.record_agent_messages(data.get("messages", []))
             print(f"[EVAL]{instance_id} Running eval", flush=True)
@@ -573,12 +792,20 @@ def _run_mini_swe_v2(**params: Any) -> dict[str, Any]:
                     "exit_status": exit_status,
                 }
             }
+        if relay_sdk_run is not None:
+            relay_sdk_artifacts = relay_sdk_run.close("run_complete")
+            relay_sdk_run = None
         relay_artifacts = relay_run.artifacts()
+        relay_artifacts.update(relay_gateway_artifacts)
+        relay_artifacts.update(relay_sdk_artifacts)
         assert result_payload is not None
         if relay_artifacts:
             result_payload[instance_id]["eval_report"]["relay_artifacts"] = relay_artifacts
         return result_payload
     finally:
+        if relay_sdk_run is not None:
+            relay_sdk_run.close("finally")
+        _stop_relay_gateway(relay_gateway_process)
         if env and hasattr(env, "cleanup"):
             env.cleanup()
 
