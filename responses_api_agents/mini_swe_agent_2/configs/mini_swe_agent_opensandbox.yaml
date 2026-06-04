@@ -65,7 +65,7 @@ mini_swe_agent_2:
       observability:
         relay:
           enabled: false
-          mode: manual
+          mode: trajectory
           command: nemo-relay
           output_dir: results/relay/{instance_id}/{run_id}
           strict: false

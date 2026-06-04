@@ -169,7 +169,7 @@ mini_swe_agent_2:
       observability:
         relay:
           enabled: false
-          mode: manual
+          mode: trajectory
           command: nemo-relay
           output_dir: results/relay/{instance_id}/{run_id}
           strict: false
@@ -230,7 +230,7 @@ Then turn on the config:
 observability:
   relay:
     enabled: true
-    mode: sdk
+    mode: trajectory
     output_dir: results/relay/{instance_id}/{task_index}/{rollout_index}/{run_id}
     strict: false
 ```
@@ -242,10 +242,15 @@ setup or export failures fail the run.
 
 Relay modes:
 
+- `trajectory` - replays Mini SWE Agent's native `.traj.json` after the run and
+  exports Relay ATOF/ATIF without requiring Mini SWE Agent code changes. This
+  is useful for compatibility testing, but timings and lifecycle boundaries are
+  reconstructed from saved messages.
 - `sdk` - recommended for rich Mini SWE trajectories. Gym initializes the
   Relay-owned Mini SWE observer integration in the Ray worker and passes the
   observer into `DefaultAgent`, so agent steps, model calls, and tool/action
-  calls are emitted as Relay lifecycle events.
+  calls are emitted as Relay lifecycle events. This requires Mini SWE Agent
+  observer hooks.
 - `manual` - legacy Gym-side exporter that emits a coarser trajectory from Gym
   marks and sandbox execution hooks.
 - `gateway` - routes Mini SWE LLM traffic through a local Relay gateway. This is

@@ -62,7 +62,7 @@ class MiniSWERelayConfig(BaseModel):
     enabled: bool = False
     output_dir: Optional[str] = None
     strict: bool = False
-    mode: Literal["manual", "gateway", "sdk"] = "manual"
+    mode: Literal["manual", "gateway", "sdk", "trajectory"] = "manual"
     command: str = "nemo-relay"
 
 
@@ -357,6 +357,38 @@ def _start_relay_sdk_observer(
             rollout_index=rollout_index,
             extra={"gym_agent": "mini_swe_agent_2"},
         )
+    )
+
+
+def _export_relay_native_trajectory(
+    *,
+    output_dir: str,
+    trajectory_id: str,
+    instance_id: str,
+    model_name: str,
+    task_index: Any,
+    rollout_index: Any,
+    trajectory: dict[str, Any],
+    task: str,
+) -> dict[str, str]:
+    from nemo_relay.integrations.mini_swe_agent import MiniSweAgentObservabilityConfig, export_trajectory
+
+    return export_trajectory(
+        trajectory,
+        MiniSweAgentObservabilityConfig(
+            output_dir=output_dir,
+            model_name=model_name,
+            trajectory_id=trajectory_id,
+            instance_id=instance_id,
+            task_index=task_index,
+            rollout_index=rollout_index,
+            extra={
+                "gym_agent": "mini_swe_agent_2",
+                "binding": "mini-swe-agent-native-trajectory",
+                "reconstructed": True,
+            },
+        ),
+        task=task,
     )
 
 
@@ -668,7 +700,7 @@ def _run_mini_swe_v2(**params: Any) -> dict[str, Any]:
         },
     )
     relay_mode = str(relay_config.get("mode") or "manual")
-    if relay_mode not in {"manual", "gateway", "sdk"}:
+    if relay_mode not in {"manual", "gateway", "sdk", "trajectory"}:
         raise ValueError(f"Unsupported mini-swe-agent relay mode: {relay_mode}")
 
     relay_enabled = bool(relay_config.get("enabled", False))
@@ -677,6 +709,7 @@ def _run_mini_swe_v2(**params: Any) -> dict[str, Any]:
     relay_gateway_artifacts: dict[str, str] = {}
     relay_sdk_run: Any | None = None
     relay_sdk_artifacts: dict[str, str] = {}
+    relay_trajectory_artifacts: dict[str, str] = {}
 
     if relay_enabled and relay_mode == "gateway" and not params["run_golden"]:
         plugin_config = _relay_observability_plugin_config(
@@ -762,6 +795,26 @@ def _run_mini_swe_v2(**params: Any) -> dict[str, Any]:
                     {"instance_id": instance_id},
                 )
 
+                if relay_enabled and relay_mode == "trajectory":
+                    try:
+                        relay_trajectory_artifacts = _export_relay_native_trajectory(
+                            output_dir=relay_output_dir,
+                            trajectory_id=relay_trajectory_id,
+                            instance_id=instance_id,
+                            model_name=str(params["model"]),
+                            task_index=params.get("task_index"),
+                            rollout_index=params.get("rollout_index"),
+                            trajectory=data,
+                            task=str(instance["problem_statement"]),
+                        )
+                    except Exception as exc:
+                        if bool(relay_config.get("strict", False)):
+                            raise
+                        print(
+                            f"[MiniSWEAgent][Relay] failed to export native trajectory: {exc}",
+                            flush=True,
+                        )
+
             if relay_gateway_process is not None:
                 _stop_relay_gateway(relay_gateway_process)
                 relay_gateway_process = None
@@ -798,6 +851,7 @@ def _run_mini_swe_v2(**params: Any) -> dict[str, Any]:
         relay_artifacts = relay_run.artifacts()
         relay_artifacts.update(relay_gateway_artifacts)
         relay_artifacts.update(relay_sdk_artifacts)
+        relay_artifacts.update(relay_trajectory_artifacts)
         assert result_payload is not None
         if relay_artifacts:
             result_payload[instance_id]["eval_report"]["relay_artifacts"] = relay_artifacts

@@ -725,6 +725,37 @@ class TestApp:
             "atif": "/tmp/relay/trajectory.atif.json",
         }
 
+        def export_relay_native_trajectory(**kwargs: Any) -> dict[str, str]:
+            relay_calls["trajectory_export"] = kwargs
+            return {"atof": "/tmp/relay/native-events.atof.jsonl", "atif": "/tmp/relay/native-trajectory.atif.json"}
+
+        monkeypatch.setattr(
+            mini_swe_app_module,
+            "_export_relay_native_trajectory",
+            export_relay_native_trajectory,
+        )
+        trajectory_result = _run_mini_swe_v2(
+            **(
+                params
+                | {
+                    "relay": {
+                        "enabled": True,
+                        "mode": "trajectory",
+                        "output_dir": "{output}/{instance_id}/relay/{run_id}",
+                    }
+                }
+            )
+        )
+
+        assert relay_calls["trajectory_export"]["model_name"] == "hosted/model"
+        assert relay_calls["trajectory_export"]["task"] == "Fix the bug"
+        assert relay_calls["trajectory_export"]["trajectory"]["messages"][0]["role"] == "system"
+        assert "observer" not in holder["agent_config"]
+        assert trajectory_result["django__django-123"]["eval_report"]["relay_artifacts"] == {
+            "atof": "/tmp/relay/native-events.atof.jsonl",
+            "atif": "/tmp/relay/native-trajectory.atif.json",
+        }
+
         golden_params = params | {"run_golden": True}
         result = _run_mini_swe_v2(**golden_params)
 
